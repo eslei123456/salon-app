@@ -210,12 +210,44 @@ hoje_iso = date.today().isoformat()
 st.set_page_config(page_title="ProManager", page_icon="🧾", layout="wide", initial_sidebar_state="expanded")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CSS — identidade em forma de recibo/cupom fiscal
+# DETECÇÃO AUTOMÁTICA DA URL PÚBLICA
+# ══════════════════════════════════════════════════════════════════════════════
+# Antes o campo "endereço do app" vinha travado em http://localhost:8501 —
+# funcionava só na máquina de quem tava com o app aberto. Aqui a gente lê o
+# endereço real direto do navegador (window.location) e injeta como query
+# param numa única recarga; depois disso o valor fica salvo na sessão e o
+# link de agendamento já nasce certo, com o domínio público (streamlit.app,
+# domínio próprio etc.) em vez de localhost.
+def detectar_url_base():
+    if "_app_url" in st.session_state:
+        return
+    param = st.query_params.get("_u")
+    if param:
+        st.session_state["_app_url"] = param if param.startswith(("http://", "https://")) else f"https://{param}"
+        return
+    st.markdown("""
+    <script>
+    (function(){
+        try{
+            const loc = window.parent.location;
+            if (loc.search.indexOf('_u=') === -1) {
+                const sep = loc.search ? '&' : '?';
+                loc.replace(loc.pathname + loc.search + sep + '_u=' + encodeURIComponent(loc.host) + loc.hash);
+            }
+        }catch(e){}
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+detectar_url_base()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CSS — identidade em forma de recibo/cupom fiscal, com acabamento futurista
 # ══════════════════════════════════════════════════════════════════════════════
 def apply_css():
     st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12151b!important;color:#ece6d7!important;}
 .stApp{background:#12151b!important;}
@@ -330,6 +362,75 @@ input,textarea,select{color:#ece6d7!important;}
 .fin-row .v{font-family:'IBM Plex Mono';font-weight:600;}
 .meta-track{height:8px;background:#ffffff0d;border-radius:4px;overflow:hidden;margin-top:8px;}
 .meta-fill{height:100%;border-radius:4px;}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ACABAMENTO FUTURISTA — fundo com profundidade, mais respiro entre os
+   blocos e acentos em gradiente néon (verde → ciano → violeta)
+   ══════════════════════════════════════════════════════════════════════ */
+html,body{
+    background:
+        radial-gradient(1000px 640px at 12% -8%, #17352c66 0%, transparent 55%),
+        radial-gradient(900px 560px at 100% 0%, #1c2a5566 0%, transparent 55%),
+        radial-gradient(700px 500px at 50% 110%, #2a1c4d40 0%, transparent 60%),
+        #0d0f14 !important;
+}
+.stApp{background:transparent!important;}
+.block-container{padding-top:2.1rem!important;padding-bottom:3rem!important;}
+
+/* respiro entre colunas e blocos */
+[data-testid="stHorizontalBlock"]{gap:18px!important;margin-bottom:18px!important;}
+[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]{margin-bottom:2px!important;}
+.stMarkdown h5{margin:28px 0 14px!important;font-size:15px!important;letter-spacing:.3px!important;}
+hr{margin:18px 0!important;}
+
+/* título/identidade com gradiente néon */
+.brand-title{
+    font-family:'Orbitron',sans-serif!important;
+    background:linear-gradient(120deg,#2fa574 0%,#00d4ff 50%,#8a6bff 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent!important;
+}
+
+/* tickets kpi — mais espaço, profundidade e glow sutil ao passar o mouse */
+.ticket{
+    padding:18px 20px!important;margin-bottom:2px!important;
+    background:linear-gradient(160deg,#1b2029,#161a22)!important;
+    border:1px solid #ffffff10!important;
+    box-shadow:0 12px 28px -18px rgba(47,165,116,.45), inset 0 1px 0 #ffffff08!important;
+    transition:transform .18s ease, box-shadow .18s ease!important;
+}
+.ticket:hover{transform:translateY(-3px)!important;box-shadow:0 16px 34px -14px rgba(0,212,255,.35), inset 0 1px 0 #ffffff10!important;}
+.ticket .v{font-family:'Orbitron',sans-serif!important;letter-spacing:.3px!important;}
+.ticket .v.green{background:linear-gradient(120deg,#2fa574,#00d4ff)!important;-webkit-background-clip:text!important;background-clip:text!important;color:transparent!important;}
+.ticket .v.red{background:linear-gradient(120deg,#d9584a,#ff8a6b)!important;-webkit-background-clip:text!important;background-clip:text!important;color:transparent!important;}
+
+/* cartões — mais espaço entre si e leve profundidade */
+.fin-card,.link-card,.pix-banner,.agenda-card,.al{margin-bottom:16px!important;}
+.fin-card,.link-card{
+    background:linear-gradient(160deg,#1b2029,#161a22)!important;
+    border:1px solid #ffffff10!important;
+    box-shadow:0 12px 30px -20px rgba(124,92,255,.35)!important;
+}
+.link-card .icn{background:linear-gradient(135deg,#2fa57440,#00d4ff30)!important;}
+.receipt{box-shadow:0 16px 42px -20px rgba(0,0,0,.55)!important;}
+.line-item{padding:8px 0!important;}
+.slot{margin:3px!important;padding:7px 9px!important;}
+.agenda-card{border-left:2px solid transparent!important;border-image:linear-gradient(180deg,#2fa574,#00d4ff) 1!important;}
+
+/* botões — gradiente néon com glow */
+.stButton>button{
+    background:linear-gradient(120deg,#1f6f52,#0d8a6f)!important;
+    box-shadow:0 6px 18px -6px rgba(47,165,116,.55)!important;
+}
+.stButton>button:hover{
+    background:linear-gradient(120deg,#2fa574,#00b8e0)!important;
+    box-shadow:0 8px 24px -6px rgba(0,212,255,.55)!important;
+}
+[data-testid="stSidebar"] button[kind="primary"]{
+    background:linear-gradient(120deg,#1f6f5240,#00d4ff20)!important;
+    border:1px solid #2fa57460!important;
+    box-shadow:0 0 18px -6px rgba(47,165,116,.55), inset 0 0 0 1px #ffffff08!important;
+}
+[data-testid="stSidebar"] button[kind="secondary"]:hover{box-shadow:0 0 14px -8px rgba(0,212,255,.4)!important;}
 </style>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -338,9 +439,9 @@ input,textarea,select{color:#ece6d7!important;}
 def tela_login():
     apply_css()
     st.markdown("""
-    <div style='text-align:center;padding:2.2rem 0 1.4rem;'>
-        <div style='font-family:Space Grotesk;font-size:2.6rem;font-weight:700;color:#ece6d7;'>ProManager</div>
-        <div style='font-size:12px;color:#8b8f99;letter-spacing:2.5px;text-transform:uppercase;margin-top:4px;'>Gestão para profissionais autônomos</div>
+    <div style='text-align:center;padding:2.4rem 0 1.6rem;'>
+        <div class='brand-title' style='font-size:2.8rem;font-weight:700;'>ProManager</div>
+        <div style='font-size:12px;color:#8b8f99;letter-spacing:2.5px;text-transform:uppercase;margin-top:6px;'>Gestão para profissionais autônomos</div>
     </div>""", unsafe_allow_html=True)
 
     cl, _, cr = st.columns([1, .08, 1])
@@ -545,9 +646,9 @@ def tela_publica_agendamento(usuario_prof):
         return
 
     L = LABELS[conta["tipo"]]
-    st.markdown(f"""<div style='text-align:center;padding:1.6rem 0 1.2rem;'>
-        <div style='font-family:Space Grotesk;font-size:1.9rem;font-weight:700;'>{conta['negocio']}</div>
-        <div style='font-size:12.5px;color:#8b8f99;'>{L['icone']} agende seu horário — sem precisar ligar ou chamar no WhatsApp</div>
+    st.markdown(f"""<div style='text-align:center;padding:1.8rem 0 1.4rem;'>
+        <div class='brand-title' style='font-size:2rem;font-weight:700;'>{conta['negocio']}</div>
+        <div style='font-size:12.5px;color:#8b8f99;margin-top:4px;'>{L['icone']} agende seu horário — sem precisar ligar ou chamar no WhatsApp</div>
     </div>""", unsafe_allow_html=True)
 
     _, mid, _ = st.columns([1, 2, 1])
@@ -620,9 +721,9 @@ def painel_inicio(conta, L):
         todos_at = q(con, "SELECT * FROM atendimentos WHERE usuario=?", (usuario,))
 
     c_head, c_av = st.columns([5, 1])
-    c_head.markdown(f"""<div style='padding:.4rem 0 .2rem;'>
-        <div style='font-family:Space Grotesk;font-size:1.5rem;font-weight:700;'>{conta['negocio']}</div>
-        <div style='font-size:12.5px;color:#8b8f99;'>{datetime.today().strftime('%A, %d de %B')}</div>
+    c_head.markdown(f"""<div style='padding:.4rem 0 .6rem;'>
+        <div class='brand-title' style='font-size:1.6rem;font-weight:700;'>{conta['negocio']}</div>
+        <div style='font-size:12.5px;color:#8b8f99;margin-top:2px;'>{datetime.today().strftime('%A, %d de %B')}</div>
     </div>""", unsafe_allow_html=True)
     c_av.markdown(f"""<div style='display:flex;justify-content:flex-end;padding-top:.5rem;'>
         <div style='width:42px;height:42px;border-radius:11px;background:{conta['cor']};display:flex;
@@ -633,12 +734,16 @@ def painel_inicio(conta, L):
     # Link público de agendamento — o cliente marca sozinho, sem depender do
     # profissional estar no computador.
     with st.expander("🔗 Seu link de agendamento — clientes marcam sozinhos", expanded=False):
+        url_detectada = st.session_state.get("_app_url")
+        if url_detectada:
+            st.caption(f"✅ Endereço detectado automaticamente: **{url_detectada}**")
+        else:
+            st.caption("🔄 Detectando o endereço do app… se o campo abaixo ainda mostrar um espaço reservado, atualize a página (F5).")
         base = st.text_input("Endereço do seu app (o que aparece na barra do navegador)",
-                              value=st.session_state.get("_base_url", "http://localhost:8501"),
+                              value=st.session_state.get("_base_url", url_detectada or "https://seu-app.streamlit.app"),
                               key="_base_url",
-                              help="Enquanto o app roda só no seu PC, esse link só funciona na sua rede. "
-                                   "Pra clientes de fora acessarem, publique o app (ex: Streamlit Community Cloud, gratuito) "
-                                   "e cole aqui o endereço público que ele te der.")
+                              help="Detectamos automaticamente pela URL que você está usando agora. Se tiver domínio "
+                                   "próprio ou quiser usar outro endereço, pode sobrescrever aqui.")
         link = f"{base.rstrip('/')}/?agendar={conta['usuario']}"
         cc1, cc2 = st.columns([3, 1])
         cc1.text_input("Link para compartilhar", value=link, key="_link_display")
