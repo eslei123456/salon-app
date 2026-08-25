@@ -7,6 +7,7 @@ ProManager v6 — Gestão para profissionais autônomos
 • Identidade visual em forma de recibo/cupom fiscal
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
 import sqlite3, hashlib, secrets, base64, random, string, io, urllib.parse
@@ -146,6 +147,23 @@ def brl(v):
 def ini(n):
     return "".join(p[0].upper() for p in n.strip().split()[:2]) or "?"
 
+PALETA_AVATAR = ["#2fa574", "#00b8d9", "#7c5cff", "#e0a940", "#ff6b9d", "#00d4ff", "#5cc9c9"]
+
+def cor_avatar(nome):
+    return PALETA_AVATAR[sum(map(ord, nome)) % len(PALETA_AVATAR)]
+
+def page_header(icon, title, subtitle=""):
+    sub = f'<div class="ph-sub">{subtitle}</div>' if subtitle else ""
+    st.markdown(f"""<div class="page-header">
+        <div class="ph-icon">{icon}</div>
+        <div><div class="ph-title">{title}</div>{sub}</div>
+    </div>""", unsafe_allow_html=True)
+
+def empty_state(icon, texto):
+    st.markdown(f"""<div class="empty-state">
+        <div class="es-icon">{icon}</div><div class="es-txt">{texto}</div>
+    </div>""", unsafe_allow_html=True)
+
 def gerar_qr_pix(chave, valor, nome="ProManager"):
     if not HAS_QR:
         return None, chave
@@ -225,7 +243,11 @@ def detectar_url_base():
     if param:
         st.session_state["_app_url"] = param if param.startswith(("http://", "https://")) else f"https://{param}"
         return
-    st.markdown("""
+    # st.markdown(unsafe_allow_html) NÃO executa <script> — o navegador ignora
+    # tags <script> inseridas via innerHTML por segurança. components.html cria
+    # um iframe de verdade, onde o script roda e consegue ler/alterar a URL
+    # da página pai (mesmo domínio, então não há bloqueio de CORS).
+    components.html("""
     <script>
     (function(){
         try{
@@ -237,7 +259,7 @@ def detectar_url_base():
         }catch(e){}
     })();
     </script>
-    """, unsafe_allow_html=True)
+    """, height=0, width=0)
 
 detectar_url_base()
 
@@ -431,6 +453,85 @@ hr{margin:18px 0!important;}
     box-shadow:0 0 18px -6px rgba(47,165,116,.55), inset 0 0 0 1px #ffffff08!important;
 }
 [data-testid="stSidebar"] button[kind="secondary"]:hover{box-shadow:0 0 14px -8px rgba(0,212,255,.4)!important;}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MAIS PERSONALIDADE — cabeçalhos de página, chips, cards de cliente/meta,
+   estados vazios ilustrados e uma leve animação de entrada nos cards
+   ══════════════════════════════════════════════════════════════════════ */
+@keyframes fadeInUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.ticket,.fin-card,.link-card,.agenda-card,.al,.pix-banner,.receipt,.contact-card,.goal-card{animation:fadeInUp .45s ease both;}
+
+/* barrinha de acento colorida antes de cada título de seção (##### ...) */
+.stMarkdown h5{position:relative;padding-left:15px;}
+.stMarkdown h5::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:4px;border-radius:3px;
+    background:linear-gradient(180deg,#2fa574,#00d4ff,#8a6bff);}
+
+/* cabeçalho de página reutilizável — ícone + título + subtítulo */
+.page-header{display:flex;align-items:center;gap:14px;margin:4px 0 22px;}
+.page-header .ph-icon{
+    width:46px;height:46px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+    font-size:21px;background:linear-gradient(150deg,#2fa57430,#00d4ff20);border:1px solid #2fa57445;
+    box-shadow:0 8px 20px -10px rgba(47,165,116,.5);
+}
+.page-header .ph-title{font-family:'Space Grotesk';font-size:19px;font-weight:700;}
+.page-header .ph-sub{font-size:12.5px;color:#8b8f99;margin-top:1px;}
+
+/* chips coloridos de status */
+.chip{display:inline-block;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.2px;margin-left:6px;}
+.chip-g{background:#2fa57420;color:#7fd6b3;border:1px solid #2fa57450;}
+.chip-a{background:#e0a94020;color:#f0c877;border:1px solid #e0a94050;}
+.chip-r{background:#d9584a20;color:#f0968b;border:1px solid #d9584a50;}
+
+/* grid de clientes — cards coloridos em vez de tabela crua */
+.contact-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:14px;margin-bottom:8px;}
+.contact-card{
+    background:linear-gradient(160deg,#1b2029,#161a22);border:1px solid #ffffff10;border-radius:14px;
+    padding:16px;box-shadow:0 10px 26px -18px rgba(0,0,0,.6);transition:transform .15s,box-shadow .15s;
+}
+.contact-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px -14px rgba(0,212,255,.3);}
+.contact-card .cc-top{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+.contact-card .cc-avatar{
+    width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+    font-family:'Space Grotesk';font-weight:700;font-size:14px;flex-shrink:0;border:1px solid;
+}
+.contact-card .cc-name{font-weight:600;font-size:14px;line-height:1.3;}
+.contact-card .cc-meta{font-size:11.5px;color:#8b8f99;margin-top:1px;}
+.contact-card .cc-stats{display:flex;gap:14px;border-top:1px solid #ffffff0d;padding-top:10px;}
+.contact-card .cc-stat{flex:1;text-align:center;}
+.contact-card .cc-stat b{display:block;font-family:'Orbitron';font-size:14px;}
+.contact-card .cc-stat span{font-size:9.5px;color:#8b8f99;text-transform:uppercase;letter-spacing:.5px;}
+
+/* grid de metas — card com anel de progresso em gradiente */
+.goal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:8px;}
+.goal-card{
+    background:linear-gradient(160deg,#1b2029,#161a22);border:1px solid #ffffff10;border-radius:14px;
+    padding:18px 20px;box-shadow:0 10px 26px -18px rgba(124,92,255,.4);
+}
+.goal-card .gc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+.goal-card .gc-name{font-weight:700;font-family:'Space Grotesk';font-size:14px;}
+.goal-card .gc-pct{font-family:'Orbitron';font-size:16px;font-weight:700;}
+.goal-card .gc-vals{font-size:11.5px;color:#8b8f99;margin-bottom:10px;}
+.goal-track{height:10px;background:#ffffff0d;border-radius:6px;overflow:hidden;}
+.goal-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,#2fa574,#00d4ff);transition:width .4s ease;}
+.goal-fill.done{background:linear-gradient(90deg,#2fa574,#8a6bff);}
+.goal-card .gc-note{font-size:11.5px;color:#8b8f99;margin-top:9px;}
+
+/* legenda colorida de categorias de gasto */
+.legend-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:5px 0;}
+.legend-row .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.legend-row .lbl{flex:1;color:#ece6d7;}
+.legend-row .val{font-family:'IBM Plex Mono';font-weight:600;color:#8b8f99;}
+
+/* estado vazio — mais convidativo que um caption cinza solto */
+.empty-state{
+    text-align:center;padding:34px 20px;border-radius:14px;border:1px dashed #ffffff1c;
+    background:#ffffff05;margin-bottom:8px;
+}
+.empty-state .es-icon{font-size:26px;margin-bottom:8px;opacity:.85;}
+.empty-state .es-txt{font-size:12.5px;color:#8b8f99;}
+
+/* barra de progresso nativa do streamlit — deixa no mesmo tom neon */
+[data-testid="stProgress"] > div > div{background:linear-gradient(90deg,#2fa574,#00d4ff)!important;}
 </style>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -599,7 +700,7 @@ def render_sidebar(conta, L):
 
 def aba_ajustes(conta):
     usuario = conta["usuario"]
-    st.markdown("##### Ajustes do negócio")
+    page_header("⚙️", "Ajustes", "Personalize seu negócio e sua conta")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<div class="fin-card">', unsafe_allow_html=True)
@@ -847,7 +948,7 @@ def painel_inicio(conta, L):
     # Próximos atendimentos
     st.markdown("<br>##### Próximos atendimentos", unsafe_allow_html=True)
     if not proximos:
-        st.caption("Nada agendado além de hoje.")
+        empty_state("📅", "Nada agendado além de hoje.")
     for a in proximos:
         st.markdown(f"""<div class="agenda-card">
             <span class="time">{a['data'][8:10]}/{a['data'][5:7]} {a['hora']}</span>
@@ -872,6 +973,7 @@ def aba_agenda(conta, L):
         contatos = [r["nome"] for r in q(con, "SELECT nome FROM contatos WHERE usuario=? ORDER BY nome", (usuario,))]
         hoje_at = q(con, "SELECT * FROM atendimentos WHERE usuario=? AND data=? ORDER BY hora", (usuario, hoje_iso))
 
+    page_header("🗓️", "Agenda", "Novos agendamentos e o dia de hoje")
     cf, cl = st.columns(2)
     with cf:
         st.markdown(f"##### Novo {L['item'].lower()}")
@@ -903,7 +1005,7 @@ def aba_agenda(conta, L):
         st.markdown("##### Agenda de hoje")
         st.caption("🔗 ao lado do nome = a pessoa agendou sozinha pelo link, sem você mexer em nada.")
         if not hoje_at:
-            st.caption("Nenhum atendimento hoje.")
+            empty_state("📭", "Nenhum atendimento hoje.")
         for a in hoje_at:
             c1, c2, c3, c4, c5 = st.columns([1, 2, 1.4, 1.6, 1.4])
             c1.write(a["hora"])
@@ -933,18 +1035,37 @@ def aba_contatos(conta, L):
     with db() as con:
         contatos = q(con, "SELECT * FROM contatos WHERE usuario=? ORDER BY visitas DESC", (usuario,))
 
-    st.markdown(f"##### {L['contato_pl']} cadastrados")
-    if contatos:
-        df = pd.DataFrame([{
-            "Nome": c["nome"], "Telefone": c["telefone"] or "—", f"{L['item']} favorito": c["item_fav"] or "—",
-            "Visitas": c["visitas"], L["falta_verbo"]+"s": c["faltas"], "Total gasto": brl(c["gasto_total"]),
-            "Status": "🚨 risco" if c["faltas"] >= 3 else ("⚠️ atenção" if c["faltas"] >= 1 else "✅ fiel"),
-        } for c in contatos])
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.caption(f"Nenhum {L['contato'].lower()} cadastrado ainda.")
+    page_header("👥", f"{L['contato_pl']} cadastrados", f"{len(contatos)} no total")
 
-    with st.expander(f"Cadastrar {L['contato'].lower()}"):
+    if contatos:
+        cards = ""
+        for c in contatos:
+            if c["faltas"] >= 3:
+                chip_cls, chip_txt = "chip-r", "🚨 risco"
+            elif c["faltas"] >= 1:
+                chip_cls, chip_txt = "chip-a", "⚠️ atenção"
+            else:
+                chip_cls, chip_txt = "chip-g", "✅ fiel"
+            cor = cor_avatar(c["nome"])
+            cards += f"""<div class="contact-card">
+                <div class="cc-top">
+                    <div class="cc-avatar" style="background:{cor}22;color:{cor};border-color:{cor}55;">{ini(c['nome'])}</div>
+                    <div style="min-width:0;">
+                        <div class="cc-name">{c['nome']}<span class="chip {chip_cls}">{chip_txt}</span></div>
+                        <div class="cc-meta">{c['telefone'] or 'sem telefone'} · {c['item_fav'] or L['item']+' não definido'}</div>
+                    </div>
+                </div>
+                <div class="cc-stats">
+                    <div class="cc-stat"><b>{c['visitas']}</b><span>Visitas</span></div>
+                    <div class="cc-stat"><b>{c['faltas']}</b><span>{L['falta_verbo']}s</span></div>
+                    <div class="cc-stat"><b>{brl(c['gasto_total'])}</b><span>Gasto</span></div>
+                </div>
+            </div>"""
+        st.markdown(f'<div class="contact-grid">{cards}</div>', unsafe_allow_html=True)
+    else:
+        empty_state("🗂️", f"Nenhum {L['contato'].lower()} cadastrado ainda — cadastre o primeiro abaixo.")
+
+    with st.expander(f"➕ Cadastrar {L['contato'].lower()}"):
         with st.form("f_contato", clear_on_submit=True):
             n = st.text_input("Nome")
             t = st.text_input("Telefone")
@@ -967,13 +1088,15 @@ def aba_financeiro(conta):
         gastos = q(con, "SELECT * FROM gastos WHERE usuario=? ORDER BY data DESC", (usuario,))
         conf = q(con, "SELECT * FROM atendimentos WHERE usuario=? AND status='confirmado'", (usuario,))
 
+    page_header("💹", "Financeiro", "Receita, gastos e pra onde seu dinheiro está indo")
+
     rt = sum(a["valor"] for a in conf); gt = sum(g["valor"] for g in gastos); lucro = rt - gt
     c1, c2, c3 = st.columns(3)
-    c1.markdown(f'<div class="ticket"><div class="l">Receita total</div><div class="v green">{brl(rt)}</div></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="ticket"><div class="l">Gastos</div><div class="v red">{brl(gt)}</div></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="ticket"><div class="l">Lucro líquido</div><div class="v {"green" if lucro>=0 else "red"}">{brl(lucro)}</div></div>', unsafe_allow_html=True)
+    c1.markdown(f'<div class="ticket"><div class="l">💰 Receita total</div><div class="v green">{brl(rt)}</div></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="ticket"><div class="l">🧾 Gastos</div><div class="v red">{brl(gt)}</div></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="ticket"><div class="l">📈 Lucro líquido</div><div class="v {"green" if lucro>=0 else "red"}">{brl(lucro)}</div></div>', unsafe_allow_html=True)
 
-    st.markdown("<br>##### Registrar gasto", unsafe_allow_html=True)
+    st.markdown("##### Registrar gasto")
     with st.form("f_gasto", clear_on_submit=True):
         d = st.text_input("Descrição")
         cat = st.selectbox("Categoria", CATEGORIAS_GASTO)
@@ -989,18 +1112,38 @@ def aba_financeiro(conta):
                 st.error("Preencha descrição e valor.")
 
     if gastos:
+        cores_pizza = ["#2fa574","#00b8d9","#7c5cff","#e0a940","#d9584a","#ff6b9d","#5cc9c9","#8b8f99","#c9a86c"]
         cm = {}
         for g in gastos: cm[g["categoria"]] = cm.get(g["categoria"], 0) + g["valor"]
-        fig = go.Figure(go.Pie(labels=list(cm.keys()), values=list(cm.values()), hole=.55,
-            marker=dict(colors=["#1f6f52","#2fa574","#e0a940","#d9584a","#8b8f99","#c9a86c"]),
-            textfont=dict(color="#ece6d7")))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#ece6d7"), margin=dict(t=10,b=10,l=10,r=10), height=260,
-            legend=dict(font=dict(color="#ece6d7")))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        categorias_ord = sorted(cm.items(), key=lambda x: -x[1])
 
+        st.markdown("##### Para onde foi o dinheiro")
+        cg, cleg = st.columns([1.3, 1])
+        with cg:
+            fig = go.Figure(go.Pie(labels=[c for c, _ in categorias_ord], values=[v for _, v in categorias_ord], hole=.6,
+                marker=dict(colors=cores_pizza, line=dict(color="#0d0f14", width=2)),
+                textfont=dict(color="#ece6d7"), textinfo="percent"))
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#ece6d7"), margin=dict(t=10,b=10,l=10,r=10), height=260, showlegend=False,
+                annotations=[dict(text=f"{brl(sum(v for _,v in categorias_ord))}<br><span style='font-size:10px;color:#8b8f99;'>total</span>",
+                                   x=0.5, y=0.5, showarrow=False, font=dict(size=15, color="#ece6d7", family="Orbitron"))])
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        with cleg:
+            st.markdown('<div style="padding-top:8px;">', unsafe_allow_html=True)
+            legend_html = ""
+            for i, (cat, val) in enumerate(categorias_ord):
+                legend_html += f"""<div class="legend-row">
+                    <span class="dot" style="background:{cores_pizza[i % len(cores_pizza)]};"></span>
+                    <span class="lbl">{cat}</span><span class="val">{brl(val)}</span>
+                </div>"""
+            st.markdown(legend_html, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown("##### Histórico de gastos")
         df = pd.DataFrame([{"Data": g["data"], "Descrição": g["descricao"], "Categoria": g["categoria"], "Valor": brl(g["valor"])} for g in gastos])
         st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        empty_state("🧾", "Nenhum gasto registrado ainda — comece registrando um acima.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ABA METAS
@@ -1011,23 +1154,38 @@ def aba_metas(conta):
         metas = q(con, "SELECT * FROM metas WHERE usuario=? AND concluida=0", (usuario,))
         conf = q(con, "SELECT * FROM atendimentos WHERE usuario=? AND status='confirmado'", (usuario,))
 
-    with st.form("f_meta", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        n = c1.text_input("Nome da meta")
-        v = c2.number_input("Valor alvo (R$)", min_value=1.0, value=500.0, step=50.0)
-        ini_d = c3.date_input("Data início", value=date.today())
-        if st.form_submit_button("Adicionar meta"):
-            if n.strip():
-                with db() as con:
-                    con.execute("INSERT INTO metas(usuario,nome,valor,inicio) VALUES (?,?,?,?)",
-                                (usuario, n.strip(), float(v), ini_d.isoformat()))
-                st.rerun()
+    page_header("🎯", "Metas", "Defina um alvo e acompanhe o progresso em tempo real")
 
-    for m in metas:
-        atual = sum(a["valor"] for a in conf if a["data"] >= m["inicio"])
-        pct = min(100, int(atual / max(m["valor"], 1) * 100))
-        st.markdown(f"**{m['nome']}** — {brl(atual)} / {brl(m['valor'])} ({pct}%)")
-        st.progress(pct / 100)
+    with st.expander("➕ Adicionar meta", expanded=not metas):
+        with st.form("f_meta", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            n = c1.text_input("Nome da meta")
+            v = c2.number_input("Valor alvo (R$)", min_value=1.0, value=500.0, step=50.0)
+            ini_d = c3.date_input("Data início", value=date.today())
+            if st.form_submit_button("Adicionar meta"):
+                if n.strip():
+                    with db() as con:
+                        con.execute("INSERT INTO metas(usuario,nome,valor,inicio) VALUES (?,?,?,?)",
+                                    (usuario, n.strip(), float(v), ini_d.isoformat()))
+                    st.rerun()
+
+    if not metas:
+        empty_state("🎯", "Nenhuma meta ativa — cadastre uma acima para começar a acompanhar.")
+    else:
+        cards = ""
+        for m in metas:
+            atual = sum(a["valor"] for a in conf if a["data"] >= m["inicio"])
+            pct = min(100, int(atual / max(m["valor"], 1) * 100))
+            done = pct >= 100
+            nota = "Meta batida! 🎉" if done else f"Faltam <b style='color:#ece6d7;'>{brl(max(0, m['valor']-atual))}</b> pra bater a meta."
+            cards += f"""<div class="goal-card">
+                <div class="gc-top"><span class="gc-name">🎯 {m['nome']}</span>
+                    <span class="gc-pct" style="color:{'#2fa574' if done else '#00d4ff'};">{pct}%</span></div>
+                <div class="gc-vals">{brl(atual)} de {brl(m['valor'])}</div>
+                <div class="goal-track"><div class="goal-fill {'done' if done else ''}" style="width:{pct}%;"></div></div>
+                <div class="gc-note">{nota}</div>
+            </div>"""
+        st.markdown(f'<div class="goal-grid">{cards}</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ROTEADOR
