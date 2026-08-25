@@ -280,6 +280,14 @@ def apply_css():
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12151b!important;color:#ece6d7!important;}
 .stApp{background:#12151b!important;}
 #MainMenu,footer,header[data-testid="stHeader"]{visibility:hidden;height:0;}
+/* a barra de navegação some se essa setinha ficar invisível junto com o
+   cabeçalho acima — força ela a continuar clicável e visível */
+[data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]{
+    visibility:visible!important;height:auto!important;width:auto!important;opacity:1!important;
+    z-index:999999!important;background:#1b1f27!important;border:1px solid #2fa57460!important;
+    border-radius:8px!important;box-shadow:0 0 14px -4px rgba(47,165,116,.6)!important;
+}
+[data-testid="stSidebarCollapsedControl"] *,[data-testid="collapsedControl"] *{color:#ece6d7!important;}
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
 [data-testid="stSidebar"]{background:#1b1f27!important;border-right:1px solid #ffffff12!important;}
 [data-testid="stSidebar"] *{color:#ece6d7!important;}
@@ -1008,29 +1016,55 @@ def aba_agenda(conta, L):
     cf, cl = st.columns(2)
     with cf:
         st.markdown(f"##### Novo {L['item'].lower()}")
+
+        # A data fica FORA do formulário de propósito: assim, ao trocar o dia,
+        # a lista de horários abaixo já atualiza na hora mostrando só o que
+        # está livre nesse dia — sem isso, dava pra marcar duas pessoas no
+        # mesmo horário sem nenhum aviso.
+        d = st.date_input("Data do agendamento", value=date.today(), key="_agenda_data")
+        if d == date.today():
+            rotulo_dia = "📍 Hoje"
+        elif d == date.today() + timedelta(days=1):
+            rotulo_dia = "📍 Amanhã"
+        else:
+            rotulo_dia = f"📍 {d.strftime('%A, %d/%m')}"
+        st.caption(rotulo_dia)
+
+        livres = horarios_livres(usuario, d.isoformat())
+
         with st.form("f_novo_at", clear_on_submit=True):
             escolha = st.selectbox(L["contato"], ["-- Novo --"] + contatos)
             novo_nome = st.text_input(f"Nome do novo {L['contato'].lower()}") if escolha == "-- Novo --" else None
             item = st.selectbox(L["item"], list(L["opcoes"].keys()))
             valor = st.number_input("Valor (R$)", min_value=0.0, value=float(L["opcoes"].get(item, 50)), step=5.0)
-            d = st.date_input("Data", value=date.today())
-            h = st.selectbox("Horário", [f"{hh:02d}:{mm:02d}" for hh in range(7, 21) for mm in (0, 30)])
+            if livres:
+                h = st.selectbox(f"Horário disponível — {rotulo_dia.replace('📍 ', '')}", livres)
+            else:
+                h = None
+                st.warning("Não sobrou horário livre nesse dia — escolha outra data acima.")
             dur = st.number_input("Duração (h)", min_value=0.5, value=1.0, step=0.5)
             obs = st.text_input("Observação")
-            if st.form_submit_button("Agendar", use_container_width=True):
+            if st.form_submit_button("Agendar", use_container_width=True, disabled=not livres):
                 nome_final = (novo_nome or "").strip() if escolha == "-- Novo --" else escolha
                 if not nome_final:
                     st.error("Informe o nome.")
                 else:
                     with db() as con:
-                        if escolha == "-- Novo --":
-                            con.execute("INSERT INTO contatos(usuario,nome,item_fav) VALUES (?,?,?)",
-                                        (usuario, nome_final, item))
-                        con.execute("""INSERT INTO atendimentos(usuario,contato,item,valor,data,hora,duracao,status,obs)
-                            VALUES (?,?,?,?,?,?,?, 'aguardando', ?)""",
-                            (usuario, nome_final, item, float(valor), d.isoformat(), h, dur, obs))
-                    st.success(f"{nome_final} — {item} às {h}")
-                    st.rerun()
+                        # confere de novo bem na hora de gravar — evita a corrida de
+                        # dois agendamentos caindo no mesmo horário
+                        ja_ocupado = q1(con, "SELECT 1 FROM atendimentos WHERE usuario=? AND data=? AND hora=? AND status!='falta'",
+                                        (usuario, d.isoformat(), h))
+                        if ja_ocupado:
+                            st.error(f"Esse horário ({h}) acabou de ser ocupado — escolha outro.")
+                        else:
+                            if escolha == "-- Novo --":
+                                con.execute("INSERT INTO contatos(usuario,nome,item_fav) VALUES (?,?,?)",
+                                            (usuario, nome_final, item))
+                            con.execute("""INSERT INTO atendimentos(usuario,contato,item,valor,data,hora,duracao,status,obs)
+                                VALUES (?,?,?,?,?,?,?, 'aguardando', ?)""",
+                                (usuario, nome_final, item, float(valor), d.isoformat(), h, dur, obs))
+                            st.success(f"{nome_final} — {item} em {d.strftime('%d/%m')} às {h}")
+                            st.rerun()
 
     with cl:
         st.markdown("##### Agenda de hoje")
@@ -1038,24 +1072,33 @@ def aba_agenda(conta, L):
         if not hoje_at:
             empty_state("📭", "Nenhum atendimento hoje.")
         for a in hoje_at:
-            c1, c2, c3, c4, c5 = st.columns([1, 2, 1.4, 1.6, 1.4])
+            c1, c2, c3, c4, c5 = st.columns([1, 2, 1.3, 1.4, 1.3])
             c1.write(a["hora"])
             tag = " 🔗" if a["origem"] == "cliente" else ""
             c2.write(a["contato"] + tag)
             c3.write(brl(a["valor"]))
             c4.write({"confirmado": "✓ confirmado", "aguardando": "⏳ aguardando", "falta": f"✗ {L['falta_verbo'].lower()}"}[a["status"]])
             if a["status"] == "aguardando":
-                b1, b2 = c5.columns(2)
-                if b1.button("✓", key=f"ok_{a['id']}"):
+                b1, b2, b3 = c5.columns(3)
+                if b1.button("✓", key=f"ok_{a['id']}", help="Confirmar"):
                     with db() as con:
                         con.execute("UPDATE atendimentos SET status='confirmado' WHERE id=?", (a["id"],))
                         con.execute("UPDATE contatos SET visitas=visitas+1, gasto_total=gasto_total+? WHERE usuario=? AND nome=?",
                                     (a["valor"], usuario, a["contato"]))
                     st.rerun()
-                if b2.button("✗", key=f"no_{a['id']}"):
+                if b2.button("✗", key=f"no_{a['id']}", help=f"Marcar {L['falta_verbo'].lower()}"):
                     with db() as con:
                         con.execute("UPDATE atendimentos SET status='falta' WHERE id=?", (a["id"],))
                         con.execute("UPDATE contatos SET faltas=faltas+1 WHERE usuario=? AND nome=?", (usuario, a["contato"]))
+                    st.rerun()
+                if b3.button("🗑", key=f"del_{a['id']}", help="Excluir este agendamento"):
+                    with db() as con:
+                        con.execute("DELETE FROM atendimentos WHERE id=?", (a["id"],))
+                    st.rerun()
+            else:
+                if c5.button("🗑 excluir", key=f"del_{a['id']}", help="Excluir este agendamento", use_container_width=True):
+                    with db() as con:
+                        con.execute("DELETE FROM atendimentos WHERE id=?", (a["id"],))
                     st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
