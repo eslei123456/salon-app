@@ -115,6 +115,12 @@ def init_db():
             con.execute("ALTER TABLE atendimentos ADD COLUMN origem TEXT DEFAULT 'profissional'")
         except sqlite3.OperationalError:
             pass  # coluna já existe
+        # URL pública do app, salva uma vez na conta em vez de depender de
+        # detecção automática via JS toda vez (o auto-detect é só uma dica).
+        try:
+            con.execute("ALTER TABLE contas ADD COLUMN app_url TEXT")
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
 
 def q(con, sql, params=()):
     return con.execute(sql, params).fetchall()
@@ -834,27 +840,52 @@ def painel_inicio(conta, L):
 
     # Link público de agendamento — o cliente marca sozinho, sem depender do
     # profissional estar no computador.
-    with st.expander("🔗 Seu link de agendamento — clientes marcam sozinhos", expanded=False):
+    with st.expander("🔗 Seu link de agendamento — clientes marcam sozinhos", expanded=not conta.get("app_url")):
+        url_salva = conta.get("app_url")
         url_detectada = st.session_state.get("_app_url")
-        if url_detectada:
-            st.caption(f"✅ Endereço detectado automaticamente: **{url_detectada}**")
+
+        if url_salva:
+            st.caption(f"🔗 Endereço salvo na sua conta: **{url_salva}**")
+        elif url_detectada:
+            st.caption(f"✅ Detectamos **{url_detectada}** pelo seu navegador — confira e clique em Salvar pra fixar na conta.")
         else:
-            st.caption("🔄 Detectando o endereço do app… se o campo abaixo ainda mostrar um espaço reservado, atualize a página (F5).")
-        base = st.text_input("Endereço do seu app (o que aparece na barra do navegador)",
-                              value=st.session_state.get("_base_url", url_detectada or "https://seu-app.streamlit.app"),
-                              key="_base_url",
-                              help="Detectamos automaticamente pela URL que você está usando agora. Se tiver domínio "
-                                   "próprio ou quiser usar outro endereço, pode sobrescrever aqui.")
-        link = f"{base.rstrip('/')}/?agendar={conta['usuario']}"
+            st.caption("✍️ Cole abaixo o endereço que aparece na barra do navegador quando você acessa o app (não o localhost).")
+
+        if "_base_url" not in st.session_state:
+            st.session_state["_base_url"] = url_salva or url_detectada or ""
+
+        cbase, csave = st.columns([4, 1])
+        base = cbase.text_input("Endereço do seu app (o que aparece na barra do navegador)",
+                                 key="_base_url", placeholder="https://seu-app.streamlit.app",
+                                 help="Esse é o domínio que fica na barra do navegador quando VOCÊ acessa o app "
+                                      "publicado (não é o link do cliente). Depois de conferir, clique em Salvar — "
+                                      "ele fica guardado na sua conta e não precisa detectar de novo.")
+        csave.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+        if csave.button("💾 Salvar", use_container_width=True):
+            limpo = base.strip().rstrip("/")
+            if not limpo.startswith(("http://", "https://")):
+                st.error("A URL precisa começar com http:// ou https://")
+            else:
+                with db() as con:
+                    con.execute("UPDATE contas SET app_url=? WHERE usuario=?", (limpo, conta["usuario"]))
+                st.success("Salvo! Esse endereço agora é usado sempre no seu link de agendamento.")
+                st.rerun()
+
+        base_valida = base.strip().startswith(("http://", "https://")) and "seu-app.streamlit.app" not in base and "localhost" not in base
+        if not base_valida:
+            st.warning("⚠️ Preencha e salve o endereço real do seu app publicado acima — enquanto isso, o link "
+                        "abaixo **não vai funcionar** pros seus clientes.")
+        link = f"{base.strip().rstrip('/')}/?agendar={conta['usuario']}" if base.strip() else ""
         cc1, cc2 = st.columns([3, 1])
-        cc1.text_input("Link para compartilhar", value=link, key="_link_display")
-        if HAS_QR:
+        cc1.text_input("Link para compartilhar", value=link, key="_link_display", disabled=not base_valida)
+        if HAS_QR and base_valida:
             qr = qrcode.QRCode(version=1, box_size=5, border=2)
             qr.add_data(link); qr.make(fit=True)
             img = qr.make_image(fill_color="#12151b", back_color="#f1ead6")
             buf = io.BytesIO(); img.save(buf, format="PNG")
             cc2.image(buf.getvalue(), width=90)
-        st.caption("Mande esse link pelo WhatsApp, Instagram na bio, ou deixe o QR Code impresso no balcão.")
+        if base_valida:
+            st.caption("Mande esse link pelo WhatsApp, Instagram na bio, ou deixe o QR Code impresso no balcão.")
 
     # Recibo do dia
     total_conf = sum(a["valor"] for a in hoje_at if a["status"] == "confirmado")
