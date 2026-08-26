@@ -257,33 +257,20 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12
 .stApp{background:#12151b!important;}
 #MainMenu,footer{visibility:hidden!important;height:0!important;}
 
-/* CORREÇÃO DO HEADER E BOTÃO LATERAL PARA ABRIR MENU */
+/* CORREÇÃO DO HEADER E SIDEBAR TOGGLE */
 header[data-testid="stHeader"]{background:transparent!important;}
 header[data-testid="stHeader"] > div:first-child{visibility:hidden!important;}
 
 [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{
     visibility:visible!important;
     display:flex!important;
-    position:fixed!important;
-    top:12px!important;
-    left:12px!important;
     z-index:999999!important;
-    background:#1f6f52!important;
-    border:1px solid #2fa574!important;
+    background:#1b1f27!important;
+    border:1px solid #2fa57460!important;
     border-radius:8px!important;
-    padding:6px 12px!important;
-    box-shadow:0 0 14px -4px rgba(47,165,116,.8)!important;
-    cursor:pointer!important;
+    box-shadow:0 0 14px -4px rgba(47,165,116,.6)!important;
 }
-[data-testid="stSidebarCollapsedControl"]::after, [data-testid="collapsedControl"]::after {
-    content: "Clique para abrir menu";
-    color: #f1ead6 !important;
-    font-size: 13px !important;
-    font-weight: 600 !important;
-    margin-left: 6px !important;
-    display: inline-block !important;
-}
-[data-testid="stSidebarCollapsedControl"] *,[data-testid="collapsedControl"] *{color:#f1ead6!important;}
+[data-testid="stSidebarCollapsedControl"] *,[data-testid="collapsedControl"] *{color:#ece6d7!important;}
 
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
 [data-testid="stSidebar"]{background:#1b1f27!important;border-right:1px solid #ffffff12!important;}
@@ -754,7 +741,6 @@ def tela_publica_agendamento(usuario_prof):
         livres = horarios_livres(usuario_prof, d.isoformat())
         if not livres:
             st.warning("Não há horários livres nesse dia — tente outra data.")
-            h = None
         else:
             h = st.selectbox("Horário disponível", livres)
         nome = st.text_input("Seu nome completo")
@@ -794,7 +780,7 @@ def tela_publica_agendamento(usuario_prof):
                     {conta['nome'].split()[0]} vai confirmar com você em breve.
                 </div>
             </div>""", unsafe_allow_html=True)
-            wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item} pelo link.")
+            wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item if 'item' in dir() else ''} pelo link.")
             st.markdown(f"[📲 Avisar pelo WhatsApp também]({wa})")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1260,7 +1246,7 @@ else:
             const doc = window.parent.document;
             const sidebar = doc.querySelector('[data-testid="stSidebar"]');
             if (sidebar && sidebar.getAttribute('aria-expanded') === 'false') {
-                const btn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button');
+                const btn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button');
                 if (btn) btn.click();
             }
         })();
