@@ -741,6 +741,7 @@ def tela_publica_agendamento(usuario_prof):
         livres = horarios_livres(usuario_prof, d.isoformat())
         if not livres:
             st.warning("Não há horários livres nesse dia — tente outra data.")
+            h = None
         else:
             h = st.selectbox("Horário disponível", livres)
         nome = st.text_input("Seu nome completo")
@@ -780,7 +781,7 @@ def tela_publica_agendamento(usuario_prof):
                     {conta['nome'].split()[0]} vai confirmar com você em breve.
                 </div>
             </div>""", unsafe_allow_html=True)
-            wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item if 'item' in dir() else ''} pelo link.")
+            wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item} pelo link.")
             st.markdown(f"[📲 Avisar pelo WhatsApp também]({wa})")
 
 # ══════════════════════════════════════════════════════════════════════════════
