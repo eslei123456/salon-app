@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS contas(
     usuario TEXT PRIMARY KEY, nome TEXT, senha_hash TEXT, senha_salt TEXT,
     tipo TEXT, profissao TEXT, negocio TEXT, cor TEXT, whatsapp TEXT,
     trial_fim TEXT, ativo INTEGER DEFAULT 0, validade TEXT,
-    codigo_ativacao TEXT, notif_enviada INTEGER DEFAULT 0
+    codigo_ativacao TEXT, notif_enviada INTEGER DEFAULT 0, app_url TEXT
 );
 CREATE TABLE IF NOT EXISTS contatos(
     id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, nome TEXT, telefone TEXT,
