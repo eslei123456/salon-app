@@ -254,36 +254,18 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12
 .stApp{background:#12151b!important;}
 #MainMenu,footer{visibility:hidden!important;height:0!important;}
 
-/* AJUSTE DO HEADER E EXIBIÇÃO DO BOTÃO LATERAL FLUTUANTE */
+/* OCULTA TODOS OS BOTÕES DE ABRIR E FECHAR A SIDEBAR */
 header[data-testid="stHeader"] {
-    background: transparent !important;
-    z-index: 99999 !important;
+    display: none !important;
 }
 
 [data-testid="stSidebarCollapsedControl"],
 button[aria-label="Open sidebar"],
 button[aria-label="Close sidebar"],
 [data-testid="collapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    position: fixed !important;
-    top: 14px !important;
-    left: 14px !important;
-    z-index: 999999 !important;
-    background: #1f6f52 !important;
-    border: 1px solid #2fa574 !important;
-    border-radius: 8px !important;
-    padding: 6px 12px !important;
-    box-shadow: 0 0 14px rgba(47,165,116,0.8) !important;
-    color: #f1ead6 !important;
-    cursor: pointer !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] svg,
-[data-testid="collapsedControl"] svg {
-    fill: #f1ead6 !important;
-    color: #f1ead6 !important;
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
 }
 
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
@@ -1232,46 +1214,6 @@ else:
         apply_css()
         L = LABELS[conta["tipo"]]
         render_sidebar(conta, L)
-        
-        # INJEÇÃO JS: GARANTE O BOTÃO "☰ MENU" FLUTUANTE NA TELA
-        components.html("""
-        <script>
-        (function(){
-            const doc = window.parent.document;
-            
-            // Tenta expandir o menu caso ele esteja recolhido ao carregar
-            setTimeout(() => {
-                const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-                const btn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button, button[aria-label="Open sidebar"]');
-                if (sidebar && sidebar.getAttribute('aria-expanded') === 'false' && btn) {
-                    btn.click();
-                }
-            }, 300);
-
-            // Injeta um botão fixo garantido caso os seletores padrão do Streamlit falhem
-            if (!doc.getElementById('btn-toggle-custom')) {
-                const customBtn = doc.createElement('button');
-                customBtn.id = 'btn-toggle-custom';
-                customBtn.innerText = '☰ Menu';
-                customBtn.style.cssText = 'position:fixed;top:12px;left:12px;z-index:9999999;background:#1f6f52;color:#f1ead6;border:1px solid #2fa574;padding:8px 14px;border-radius:8px;font-weight:bold;cursor:pointer;box-shadow:0 0 10px rgba(0,0,0,0.5);';
-                
-                customBtn.onclick = function() {
-                    const targetBtn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button, button[aria-label="Open sidebar"], button[aria-label="Close sidebar"]');
-                    if (targetBtn) {
-                        targetBtn.click();
-                    } else {
-                        const sb = doc.querySelector('[data-testid="stSidebar"]');
-                        if (sb) {
-                            const current = sb.getAttribute('aria-expanded');
-                            sb.setAttribute('aria-expanded', current === 'true' ? 'false' : 'true');
-                        }
-                    }
-                };
-                doc.body.appendChild(customBtn);
-            }
-        })();
-        </script>
-        """, height=0, width=0)
 
         nav = st.session_state.get("nav", "inicio")
         if nav == "inicio": painel_inicio(conta, L)
