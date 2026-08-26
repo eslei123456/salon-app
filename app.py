@@ -279,7 +279,14 @@ def apply_css():
 
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12151b!important;color:#ece6d7!important;}
 .stApp{background:#12151b!important;}
-#MainMenu,footer,header[data-testid="stHeader"]{visibility:hidden;height:0;}
+#MainMenu,footer{visibility:hidden!important;height:0!important;}
+/* NÃO zeramos a altura do header inteiro — em versões atuais do Streamlit o
+   botão de abrir/fechar a sidebar mora dentro dele, e "height:0" no pai
+   cortava esse botão mesmo com o !important de visibilidade abaixo. Aqui só
+   escondemos a toolbar (menu "Deploy" etc.), mantendo o header (e o controle
+   da sidebar) com altura normal. */
+header[data-testid="stHeader"]{background:transparent!important;height:2.75rem!important;}
+header[data-testid="stHeader"] [data-testid="stToolbar"]{visibility:hidden!important;}
 /* a barra de navegação some se essa setinha ficar invisível junto com o
    cabeçalho acima — força ela a continuar clicável e visível */
 [data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]{
@@ -1287,6 +1294,21 @@ else:
         apply_css()
         L = LABELS[conta["tipo"]]
         render_sidebar(conta, L)
+        # Rede de segurança: se por qualquer motivo (recarregamento de
+        # página, tela estreita etc.) a sidebar ficar colapsada, isso a
+        # reabre sozinha — sem depender do usuário achar o botão escondido.
+        components.html("""
+        <script>
+        (function(){
+            const doc = window.parent.document;
+            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+            if (sidebar && sidebar.getAttribute('aria-expanded') === 'false') {
+                const btn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button');
+                if (btn) btn.click();
+            }
+        })();
+        </script>
+        """, height=0, width=0)
         nav = st.session_state.get("nav", "inicio")
         if nav == "inicio": painel_inicio(conta, L)
         elif nav == "agenda": aba_agenda(conta, L)
