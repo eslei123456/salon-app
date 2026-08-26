@@ -32,9 +32,6 @@ DB_PATH        = "promanager.db"
 FOTOS_DIR      = Path("fotos")
 FOTOS_DIR.mkdir(exist_ok=True)
 
-# Rótulos que mudam conforme o tipo de negócio — é isso que permite um único
-# modelo de dados (atendimentos/contatos) atender beleza e professor, e
-# facilita adicionar um terceiro tipo de negócio no futuro sem duplicar código.
 LABELS = {
     "beleza": {
         "item": "Serviço", "contato": "Cliente", "contato_pl": "Clientes",
@@ -63,7 +60,7 @@ CATEGORIAS_GASTO = ["Produtos / Insumos","Material didático","Aluguel","Energia
     "Internet / Telefone","Plataformas online","Equipamento","Marketing","Pessoal","Outros"]
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BANCO DE DADOS (SQLite em vez de um único arquivo JSON)
+# BANCO DE DADOS
 # ══════════════════════════════════════════════════════════════════════════════
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS contas(
@@ -246,7 +243,7 @@ def detectar_url_base():
 detectar_url_base()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CSS — identidade em forma de recibo/cupom fiscal, com acabamento futurista
+# CSS
 # ══════════════════════════════════════════════════════════════════════════════
 def apply_css():
     st.markdown("""
@@ -257,20 +254,37 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12
 .stApp{background:#12151b!important;}
 #MainMenu,footer{visibility:hidden!important;height:0!important;}
 
-/* CORREÇÃO DO HEADER E SIDEBAR TOGGLE */
-header[data-testid="stHeader"]{background:transparent!important;}
-header[data-testid="stHeader"] > div:first-child{visibility:hidden!important;}
-
-[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{
-    visibility:visible!important;
-    display:flex!important;
-    z-index:999999!important;
-    background:#1b1f27!important;
-    border:1px solid #2fa57460!important;
-    border-radius:8px!important;
-    box-shadow:0 0 14px -4px rgba(47,165,116,.6)!important;
+/* AJUSTE DO HEADER E EXIBIÇÃO DO BOTÃO LATERAL FLUTUANTE */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    z-index: 99999 !important;
 }
-[data-testid="stSidebarCollapsedControl"] *,[data-testid="collapsedControl"] *{color:#ece6d7!important;}
+
+[data-testid="stSidebarCollapsedControl"],
+button[aria-label="Open sidebar"],
+button[aria-label="Close sidebar"],
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: fixed !important;
+    top: 14px !important;
+    left: 14px !important;
+    z-index: 999999 !important;
+    background: #1f6f52 !important;
+    border: 1px solid #2fa574 !important;
+    border-radius: 8px !important;
+    padding: 6px 12px !important;
+    box-shadow: 0 0 14px rgba(47,165,116,0.8) !important;
+    color: #f1ead6 !important;
+    cursor: pointer !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg {
+    fill: #f1ead6 !important;
+    color: #f1ead6 !important;
+}
 
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
 [data-testid="stSidebar"]{background:#1b1f27!important;border-right:1px solid #ffffff12!important;}
@@ -282,7 +296,6 @@ hr{border-color:#ffffff14!important;margin:12px 0!important;}
 .stButton>button{background:#1f6f52!important;color:#f1ead6!important;border:none!important;border-radius:10px!important;font-weight:600!important;font-size:13px!important;padding:10px 22px!important;transition:background .15s!important;}
 .stButton>button:hover{background:#2fa574!important;}
 
-/* navegação lateral (rail) — substitui as abas */
 [data-testid="stSidebar"] .stButton>button{justify-content:flex-start!important;}
 [data-testid="stSidebar"] button[kind="secondary"]{
     background:transparent!important;color:#8b8f99!important;border:1px solid transparent!important;
@@ -306,7 +319,6 @@ input,textarea,select{color:#ece6d7!important;}
 [data-testid="stExpander"]{background:#1b1f27!important;border:1px solid #ffffff14!important;border-radius:12px!important;}
 [data-testid="stForm"]{background:transparent!important;border:none!important;padding:0!important;}
 
-/* recibo do dia */
 .receipt{background:#f1ead6;color:#12151b;border-radius:14px 14px 0 0;padding:20px 24px 14px;margin-top:6px;}
 .receipt-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;}
 .receipt-head .lbl{font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:#6b6552;font-weight:600;}
@@ -327,7 +339,6 @@ input,textarea,select{color:#ece6d7!important;}
 .receipt-total .v{font-family:'Space Grotesk';font-weight:700;font-size:20px;}
 .perf{height:14px;background:#12151b;-webkit-mask:radial-gradient(circle 5px at 12px 0,transparent 98%,#000 100%) repeat-x;mask:radial-gradient(circle 5px at 12px 0,transparent 98%,#000 100%) repeat-x;-webkit-mask-size:22px 14px;mask-size:22px 14px;border-radius:0 0 14px 14px;margin-bottom:14px;}
 
-/* tickets kpi — com furo de talão, como no mockup */
 .ticket{background:#1b1f27;border-radius:12px;padding:14px 16px;position:relative;}
 .ticket::before,.ticket::after{content:"";position:absolute;top:50%;transform:translateY(-50%);width:11px;height:11px;border-radius:50%;background:#12151b;}
 .ticket::before{left:-6px;}
@@ -338,16 +349,13 @@ input,textarea,select{color:#ece6d7!important;}
 .ticket .v.red{color:#d9584a;}
 .ticket .s{font-size:11px;color:#8b8f99;margin-top:3px;}
 
-/* card de link público */
 .link-card{background:linear-gradient(135deg,#1b1f27,#20242d);border:1px solid #2fa57430;border-radius:14px;padding:18px 22px;margin-bottom:16px;display:flex;align-items:center;gap:16px;}
 .link-card .icn{width:42px;height:42px;border-radius:11px;background:#2fa57420;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:19px;}
 .link-card .txt b{font-size:14px;display:block;margin-bottom:2px;}
 .link-card .txt span{font-size:12px;color:#8b8f99;}
 
-/* badge de origem na agenda */
 .origem-cliente{font-size:10px;color:#2fa574;background:#2fa57418;padding:2px 8px;border-radius:10px;font-weight:600;margin-left:6px;}
 
-/* linhas de agenda */
 .agenda-card{background:#1b1f27;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:8px;border-left:2px dashed #ffffff20;}
 .agenda-card .time{font-family:'IBM Plex Mono';font-size:13px;color:#8b8f99;width:46px;flex-shrink:0;}
 .agenda-card .init{width:32px;height:32px;border-radius:9px;background:#ffffff0f;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk';font-size:12px;font-weight:700;flex-shrink:0;}
@@ -356,24 +364,20 @@ input,textarea,select{color:#ece6d7!important;}
 .agenda-card .info span{display:block;font-size:11.5px;color:#8b8f99;}
 .agenda-card .val{font-family:'IBM Plex Mono';font-weight:600;font-size:13px;}
 
-/* alertas */
 .al{border-radius:12px;padding:12px 16px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.6;}
 .al-g{background:#2fa57414;border:1px solid #2fa57440;color:#7fd6b3;}
 .al-a{background:#e0a94014;border:1px solid #e0a94040;color:#f0c877;}
 .al-r{background:#d9584a14;border:1px solid #d9584a40;color:#f0968b;}
 
-/* pix banner */
 .pix-banner{background:#1b1f27;border-radius:14px;padding:14px 20px;display:flex;align-items:center;gap:14px;border:1px solid #2fa57430;margin-top:8px;}
 .pix-banner b{font-size:13.5px;display:block;}
 .pix-banner span{font-size:12px;color:#8b8f99;}
 
-/* horários do dia */
 .slot{padding:6px 8px;border-radius:7px;font-family:'IBM Plex Mono';font-size:11px;font-weight:600;border:1px solid;display:inline-block;margin:2px;}
 .sl{background:#2fa57414;color:#7fd6b3;border-color:#2fa57440;}
 .so{background:#ece6d71a;color:#ece6d7;border-color:#ece6d740;}
 .sb2{background:#d9584a14;color:#f0968b;border-color:#d9584a40;}
 
-/* card financeiro detalhado */
 .fin-card{background:#1b1f27;border-radius:14px;padding:18px 20px;margin-bottom:10px;}
 .fin-card h3{font-family:'Space Grotesk';font-size:13.5px;margin:0 0 12px;font-weight:700;}
 .fin-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px;border-bottom:1px solid #ffffff0d;}
@@ -383,7 +387,6 @@ input,textarea,select{color:#ece6d7!important;}
 .meta-track{height:8px;background:#ffffff0d;border-radius:4px;overflow:hidden;margin-top:8px;}
 .meta-fill{height:100%;border-radius:4px;}
 
-/* ACABAMENTO FUTURISTA */
 html,body{
     background:
         radial-gradient(1000px 640px at 12% -8%, #17352c66 0%, transparent 55%),
@@ -394,20 +397,17 @@ html,body{
 .stApp{background:transparent!important;}
 .block-container{padding-top:2.1rem!important;padding-bottom:3rem!important;}
 
-/* respiro entre colunas e blocos */
 [data-testid="stHorizontalBlock"]{gap:18px!important;margin-bottom:18px!important;}
 [data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]{margin-bottom:2px!important;}
 .stMarkdown h5{margin:28px 0 14px!important;font-size:15px!important;letter-spacing:.3px!important;}
 hr{margin:18px 0!important;}
 
-/* título/identidade com gradiente néon */
 .brand-title{
     font-family:'Orbitron',sans-serif!important;
     background:linear-gradient(120deg,#2fa574 0%,#00d4ff 50%,#8a6bff 100%);
     -webkit-background-clip:text;background-clip:text;color:transparent!important;
 }
 
-/* tickets kpi */
 .ticket{
     padding:18px 20px!important;margin-bottom:2px!important;
     background:linear-gradient(160deg,#1b2029,#161a22)!important;
@@ -420,7 +420,6 @@ hr{margin:18px 0!important;}
 .ticket .v.green{background:linear-gradient(120deg,#2fa574,#00d4ff)!important;-webkit-background-clip:text!important;background-clip:text!important;color:transparent!important;}
 .ticket .v.red{background:linear-gradient(120deg,#d9584a,#ff8a6b)!important;-webkit-background-clip:text!important;background-clip:text!important;color:transparent!important;}
 
-/* cartões */
 .fin-card,.link-card,.pix-banner,.agenda-card,.al{margin-bottom:16px!important;}
 .fin-card,.link-card{
     background:linear-gradient(160deg,#1b2029,#161a22)!important;
@@ -433,7 +432,6 @@ hr{margin:18px 0!important;}
 .slot{margin:3px!important;padding:7px 9px!important;}
 .agenda-card{border-left:2px solid transparent!important;border-image:linear-gradient(180deg,#2fa574,#00d4ff) 1!important;}
 
-/* botões */
 .stButton>button{
     background:linear-gradient(120deg,#1f6f52,#0d8a6f)!important;
     box-shadow:0 6px 18px -6px rgba(47,165,116,.55)!important;
@@ -587,7 +585,7 @@ def tela_login():
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TELA DE BLOQUEIO (trial/assinatura vencidos)
+# TELA DE BLOQUEIO
 # ══════════════════════════════════════════════════════════════════════════════
 def tela_bloqueio(conta):
     apply_css()
@@ -641,7 +639,7 @@ def tela_bloqueio(conta):
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR — navegação em lista (rail), sem abas
+# SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 NAV_ITEMS = [("inicio", "🏠", "Início"), ("agenda", "📅", "Agenda"),
              ("contatos", "👥", None), ("financeiro", "💳", "Financeiro"),
@@ -741,6 +739,7 @@ def tela_publica_agendamento(usuario_prof):
         livres = horarios_livres(usuario_prof, d.isoformat())
         if not livres:
             st.warning("Não há horários livres nesse dia — tente outra data.")
+            h = None
         else:
             h = st.selectbox("Horário disponível", livres)
         nome = st.text_input("Seu nome completo")
@@ -780,7 +779,7 @@ def tela_publica_agendamento(usuario_prof):
                     {conta['nome'].split()[0]} vai confirmar com você em breve.
                 </div>
             </div>""", unsafe_allow_html=True)
-            wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item if 'item' in dir() else ''} pelo link.")
+            wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item} pelo link.")
             st.markdown(f"[📲 Avisar pelo WhatsApp também]({wa})")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -855,7 +854,6 @@ def painel_inicio(conta, L):
         if base_valida:
             st.caption("Mande esse link pelo WhatsApp, Instagram na bio, ou deixe o QR Code impresso no balcão.")
 
-    # Recibo do dia
     total_conf = sum(a["valor"] for a in hoje_at if a["status"] == "confirmado")
     html = f"""<div class="receipt">
         <div class="receipt-head"><span class="lbl">Recibo de hoje</span><span class="val">{len(hoje_at)} atendimento(s)</span></div>
@@ -877,7 +875,6 @@ def painel_inicio(conta, L):
     st.markdown(html, unsafe_allow_html=True)
     st.markdown('<div class="perf"></div>', unsafe_allow_html=True)
 
-    # Horários do dia
     ocupados = {a["hora"]: a for a in hoje_at}
     slots_html = '<div style="margin:14px 0 6px;">'
     for hh in range(7, 21):
@@ -896,7 +893,6 @@ def painel_inicio(conta, L):
     st.markdown(slots_html, unsafe_allow_html=True)
     st.caption("🟩 ocupado · ⬜ livre · 🟥 falta — passe o mouse num horário pra ver quem está agendado")
 
-    # KPIs
     rec_sem = sum(a["valor"] for a in conf_sem)
     rec_total = sum(a["valor"] for a in todos_at if a["status"] == "confirmado")
     rec_mes = sum(a["valor"] for a in conf_mes)
@@ -910,7 +906,6 @@ def painel_inicio(conta, L):
     c3.markdown(f'<div class="ticket"><div class="l">Receita total</div><div class="v">{brl(rec_total)}</div><div class="s">histórico</div></div>', unsafe_allow_html=True)
     c4.markdown(f'<div class="ticket"><div class="l">{"Assinatura" if assinatura_valida(conta) else "Trial"}</div><div class="v">{dias_assin} dias</div><div class="s">restantes</div></div>', unsafe_allow_html=True)
 
-    # Financeiro do mês
     ticket_medio = (rec_mes / len(conf_mes)) if conf_mes else 0
     fin_html = f"""<div class="fin-card"><h3>Financeiro do mês</h3>
         <div class="fin-row"><span class="l">Receita do mês</span><span class="v" style="color:#2fa574;">{brl(rec_mes)}</span></div>
@@ -926,7 +921,6 @@ def painel_inicio(conta, L):
     fin_html += "</div>"
     st.markdown(fin_html, unsafe_allow_html=True)
 
-    # Meta ativa
     with db() as con:
         meta = q1(con, "SELECT * FROM metas WHERE usuario=? AND concluida=0 ORDER BY id LIMIT 1", (usuario,))
     if meta:
@@ -944,7 +938,6 @@ def painel_inicio(conta, L):
     else:
         st.caption("Nenhuma meta ativa — cadastre uma na aba Metas para acompanhar aqui.")
 
-    # Próximos atendimentos
     st.markdown("<br>##### Próximos atendimentos", unsafe_allow_html=True)
     if not proximos:
         empty_state("📅", "Nada agendado além de hoje.")
@@ -956,7 +949,6 @@ def painel_inicio(conta, L):
             <span class="val">{brl(a['valor'])}</span>
         </div>""", unsafe_allow_html=True)
 
-    # Pix banner
     if assinatura_valida(conta):
         st.markdown(f"""<div class="pix-banner">
             <div><b>Renovação em {dias_restantes(conta['validade'])} dias</b>
@@ -1240,18 +1232,47 @@ else:
         apply_css()
         L = LABELS[conta["tipo"]]
         render_sidebar(conta, L)
+        
+        # INJEÇÃO JS: GARANTE O BOTÃO "☰ MENU" FLUTUANTE NA TELA
         components.html("""
         <script>
         (function(){
             const doc = window.parent.document;
-            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-            if (sidebar && sidebar.getAttribute('aria-expanded') === 'false') {
-                const btn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button');
-                if (btn) btn.click();
+            
+            // Tenta expandir o menu caso ele esteja recolhido ao carregar
+            setTimeout(() => {
+                const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+                const btn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button, button[aria-label="Open sidebar"]');
+                if (sidebar && sidebar.getAttribute('aria-expanded') === 'false' && btn) {
+                    btn.click();
+                }
+            }, 300);
+
+            // Injeta um botão fixo garantido caso os seletores padrão do Streamlit falhem
+            if (!doc.getElementById('btn-toggle-custom')) {
+                const customBtn = doc.createElement('button');
+                customBtn.id = 'btn-toggle-custom';
+                customBtn.innerText = '☰ Menu';
+                customBtn.style.cssText = 'position:fixed;top:12px;left:12px;z-index:9999999;background:#1f6f52;color:#f1ead6;border:1px solid #2fa574;padding:8px 14px;border-radius:8px;font-weight:bold;cursor:pointer;box-shadow:0 0 10px rgba(0,0,0,0.5);';
+                
+                customBtn.onclick = function() {
+                    const targetBtn = doc.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button, button[aria-label="Open sidebar"], button[aria-label="Close sidebar"]');
+                    if (targetBtn) {
+                        targetBtn.click();
+                    } else {
+                        const sb = doc.querySelector('[data-testid="stSidebar"]');
+                        if (sb) {
+                            const current = sb.getAttribute('aria-expanded');
+                            sb.setAttribute('aria-expanded', current === 'true' ? 'false' : 'true');
+                        }
+                    }
+                };
+                doc.body.appendChild(customBtn);
             }
         })();
         </script>
         """, height=0, width=0)
+
         nav = st.session_state.get("nav", "inicio")
         if nav == "inicio": painel_inicio(conta, L)
         elif nav == "agenda": aba_agenda(conta, L)
