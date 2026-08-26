@@ -254,18 +254,31 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12
 .stApp{background:#12151b!important;}
 #MainMenu,footer{visibility:hidden!important;height:0!important;}
 
-/* OCULTA TODOS OS BOTÕES DE ABRIR E FECHAR A SIDEBAR */
+/* MENU SEMPRE ABERTO — remove totalmente a opção de recolher/expandir */
 header[data-testid="stHeader"] {
-    display: none !important;
+    background: transparent !important;
+    z-index: 99999 !important;
 }
 
 [data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"],
 button[aria-label="Open sidebar"],
 button[aria-label="Close sidebar"],
-[data-testid="collapsedControl"] {
+button[aria-label="Collapse sidebar"] {
     display: none !important;
     visibility: hidden !important;
-    opacity: 0 !important;
+    pointer-events: none !important;
+}
+[data-testid="stSidebar"] {
+    min-width: 260px !important;
+    max-width: 260px !important;
+    transform: none !important;
+    visibility: visible !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] {
+    min-width: 260px !important;
+    margin-left: 0 !important;
 }
 
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
