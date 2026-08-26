@@ -65,10 +65,6 @@ CATEGORIAS_GASTO = ["Produtos / Insumos","Material didático","Aluguel","Energia
 # ══════════════════════════════════════════════════════════════════════════════
 # BANCO DE DADOS (SQLite em vez de um único arquivo JSON)
 # ══════════════════════════════════════════════════════════════════════════════
-# Por que trocar: o JSON antigo reescrevia o arquivo inteiro a cada clique —
-# com duas pessoas usando ao mesmo tempo, a segunda escrita podia sobrescrever
-# a primeira. SQLite grava por linha e aguenta concorrência de verdade.
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS contas(
     usuario TEXT PRIMARY KEY, nome TEXT, senha_hash TEXT, senha_salt TEXT,
@@ -110,17 +106,14 @@ def db():
 def init_db():
     with db() as con:
         con.executescript(SCHEMA)
-        # migração leve para bancos criados antes da coluna 'origem' existir
         try:
             con.execute("ALTER TABLE atendimentos ADD COLUMN origem TEXT DEFAULT 'profissional'")
         except sqlite3.OperationalError:
-            pass  # coluna já existe
-        # URL pública do app, salva uma vez na conta em vez de depender de
-        # detecção automática via JS toda vez (o auto-detect é só uma dica).
+            pass
         try:
             con.execute("ALTER TABLE contas ADD COLUMN app_url TEXT")
         except sqlite3.OperationalError:
-            pass  # coluna já existe
+            pass
 
 def q(con, sql, params=()):
     return con.execute(sql, params).fetchall()
@@ -129,8 +122,6 @@ def q1(con, sql, params=()):
     r = con.execute(sql, params).fetchone()
     return dict(r) if r else None
 
-# ── senha: hash + salt (a v5 usava sha256 puro, sem salt — vulnerável a
-#    rainbow table se o banco vazar). Aqui cada conta tem seu próprio salt. ──
 def hash_senha(senha, salt=None):
     salt = salt or secrets.token_hex(16)
     h = hashlib.sha256((salt + senha).encode()).hexdigest()
@@ -190,10 +181,6 @@ def gerar_qr_pix(chave, valor, nome="ProManager"):
     buf = io.BytesIO(); img.save(buf, format="PNG")
     return buf.getvalue(), payload
 
-# ── Ativação: hoje ainda é manual (você recebe o Pix e envia o código).
-#    Para automatizar de verdade, troque activar_manual() por um webhook do
-#    Mercado Pago/Asaas que chama esta mesma função quando o pagamento cai —
-#    a assinatura já fica pronta para isso, só falta a chave de API do provedor. ──
 def ativar_conta(usuario, dias=30):
     with db() as con:
         con.execute(
@@ -216,7 +203,6 @@ def dias_restantes(iso):
     except Exception: return 0
 
 def horarios_livres(usuario, data_iso):
-    """Horários de 07:00 a 20:30 que ainda não têm atendimento marcado nesse dia."""
     todos = [f"{hh:02d}:{mm:02d}" for hh in range(7, 21) for mm in (0, 30)]
     with db() as con:
         ocupados = {r["hora"] for r in q(con,
@@ -236,12 +222,6 @@ st.set_page_config(page_title="ProManager", page_icon="🧾", layout="wide", ini
 # ══════════════════════════════════════════════════════════════════════════════
 # DETECÇÃO AUTOMÁTICA DA URL PÚBLICA
 # ══════════════════════════════════════════════════════════════════════════════
-# Antes o campo "endereço do app" vinha travado em http://localhost:8501 —
-# funcionava só na máquina de quem tava com o app aberto. Aqui a gente lê o
-# endereço real direto do navegador (window.location) e injeta como query
-# param numa única recarga; depois disso o valor fica salvo na sessão e o
-# link de agendamento já nasce certo, com o domínio público (streamlit.app,
-# domínio próprio etc.) em vez de localhost.
 def detectar_url_base():
     if "_app_url" in st.session_state:
         return
@@ -249,10 +229,6 @@ def detectar_url_base():
     if param:
         st.session_state["_app_url"] = param if param.startswith(("http://", "https://")) else f"https://{param}"
         return
-    # st.markdown(unsafe_allow_html) NÃO executa <script> — o navegador ignora
-    # tags <script> inseridas via innerHTML por segurança. components.html cria
-    # um iframe de verdade, onde o script roda e consegue ler/alterar a URL
-    # da página pai (mesmo domínio, então não há bloqueio de CORS).
     components.html("""
     <script>
     (function(){
@@ -280,21 +256,22 @@ def apply_css():
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12151b!important;color:#ece6d7!important;}
 .stApp{background:#12151b!important;}
 #MainMenu,footer{visibility:hidden!important;height:0!important;}
-/* NÃO zeramos a altura do header inteiro — em versões atuais do Streamlit o
-   botão de abrir/fechar a sidebar mora dentro dele, e "height:0" no pai
-   cortava esse botão mesmo com o !important de visibilidade abaixo. Aqui só
-   escondemos a toolbar (menu "Deploy" etc.), mantendo o header (e o controle
-   da sidebar) com altura normal. */
-header[data-testid="stHeader"]{background:transparent!important;height:2.75rem!important;}
-header[data-testid="stHeader"] [data-testid="stToolbar"]{visibility:hidden!important;}
-/* a barra de navegação some se essa setinha ficar invisível junto com o
-   cabeçalho acima — força ela a continuar clicável e visível */
-[data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]{
-    visibility:visible!important;height:auto!important;width:auto!important;opacity:1!important;
-    z-index:999999!important;background:#1b1f27!important;border:1px solid #2fa57460!important;
-    border-radius:8px!important;box-shadow:0 0 14px -4px rgba(47,165,116,.6)!important;
+
+/* CORREÇÃO DO HEADER E SIDEBAR TOGGLE */
+header[data-testid="stHeader"]{background:transparent!important;}
+header[data-testid="stHeader"] > div:first-child{visibility:hidden!important;}
+
+[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{
+    visibility:visible!important;
+    display:flex!important;
+    z-index:999999!important;
+    background:#1b1f27!important;
+    border:1px solid #2fa57460!important;
+    border-radius:8px!important;
+    box-shadow:0 0 14px -4px rgba(47,165,116,.6)!important;
 }
 [data-testid="stSidebarCollapsedControl"] *,[data-testid="collapsedControl"] *{color:#ece6d7!important;}
+
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
 [data-testid="stSidebar"]{background:#1b1f27!important;border-right:1px solid #ffffff12!important;}
 [data-testid="stSidebar"] *{color:#ece6d7!important;}
@@ -406,10 +383,7 @@ input,textarea,select{color:#ece6d7!important;}
 .meta-track{height:8px;background:#ffffff0d;border-radius:4px;overflow:hidden;margin-top:8px;}
 .meta-fill{height:100%;border-radius:4px;}
 
-/* ══════════════════════════════════════════════════════════════════════
-   ACABAMENTO FUTURISTA — fundo com profundidade, mais respiro entre os
-   blocos e acentos em gradiente néon (verde → ciano → violeta)
-   ══════════════════════════════════════════════════════════════════════ */
+/* ACABAMENTO FUTURISTA */
 html,body{
     background:
         radial-gradient(1000px 640px at 12% -8%, #17352c66 0%, transparent 55%),
@@ -433,7 +407,7 @@ hr{margin:18px 0!important;}
     -webkit-background-clip:text;background-clip:text;color:transparent!important;
 }
 
-/* tickets kpi — mais espaço, profundidade e glow sutil ao passar o mouse */
+/* tickets kpi */
 .ticket{
     padding:18px 20px!important;margin-bottom:2px!important;
     background:linear-gradient(160deg,#1b2029,#161a22)!important;
@@ -446,7 +420,7 @@ hr{margin:18px 0!important;}
 .ticket .v.green{background:linear-gradient(120deg,#2fa574,#00d4ff)!important;-webkit-background-clip:text!important;background-clip:text!important;color:transparent!important;}
 .ticket .v.red{background:linear-gradient(120deg,#d9584a,#ff8a6b)!important;-webkit-background-clip:text!important;background-clip:text!important;color:transparent!important;}
 
-/* cartões — mais espaço entre si e leve profundidade */
+/* cartões */
 .fin-card,.link-card,.pix-banner,.agenda-card,.al{margin-bottom:16px!important;}
 .fin-card,.link-card{
     background:linear-gradient(160deg,#1b2029,#161a22)!important;
@@ -459,7 +433,7 @@ hr{margin:18px 0!important;}
 .slot{margin:3px!important;padding:7px 9px!important;}
 .agenda-card{border-left:2px solid transparent!important;border-image:linear-gradient(180deg,#2fa574,#00d4ff) 1!important;}
 
-/* botões — gradiente néon com glow */
+/* botões */
 .stButton>button{
     background:linear-gradient(120deg,#1f6f52,#0d8a6f)!important;
     box-shadow:0 6px 18px -6px rgba(47,165,116,.55)!important;
@@ -475,19 +449,13 @@ hr{margin:18px 0!important;}
 }
 [data-testid="stSidebar"] button[kind="secondary"]:hover{box-shadow:0 0 14px -8px rgba(0,212,255,.4)!important;}
 
-/* ══════════════════════════════════════════════════════════════════════
-   MAIS PERSONALIDADE — cabeçalhos de página, chips, cards de cliente/meta,
-   estados vazios ilustrados e uma leve animação de entrada nos cards
-   ══════════════════════════════════════════════════════════════════════ */
 @keyframes fadeInUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 .ticket,.fin-card,.link-card,.agenda-card,.al,.pix-banner,.receipt,.contact-card,.goal-card{animation:fadeInUp .45s ease both;}
 
-/* barrinha de acento colorida antes de cada título de seção (##### ...) */
 .stMarkdown h5{position:relative;padding-left:15px;}
 .stMarkdown h5::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:4px;border-radius:3px;
     background:linear-gradient(180deg,#2fa574,#00d4ff,#8a6bff);}
 
-/* cabeçalho de página reutilizável — ícone + título + subtítulo */
 .page-header{display:flex;align-items:center;gap:14px;margin:4px 0 22px;}
 .page-header .ph-icon{
     width:46px;height:46px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
@@ -497,13 +465,11 @@ hr{margin:18px 0!important;}
 .page-header .ph-title{font-family:'Space Grotesk';font-size:19px;font-weight:700;}
 .page-header .ph-sub{font-size:12.5px;color:#8b8f99;margin-top:1px;}
 
-/* chips coloridos de status */
 .chip{display:inline-block;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.2px;margin-left:6px;}
 .chip-g{background:#2fa57420;color:#7fd6b3;border:1px solid #2fa57450;}
 .chip-a{background:#e0a94020;color:#f0c877;border:1px solid #e0a94050;}
 .chip-r{background:#d9584a20;color:#f0968b;border:1px solid #d9584a50;}
 
-/* grid de clientes — cards coloridos em vez de tabela crua */
 .contact-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:14px;margin-bottom:8px;}
 .contact-card{
     background:linear-gradient(160deg,#1b2029,#161a22);border:1px solid #ffffff10;border-radius:14px;
@@ -522,7 +488,6 @@ hr{margin:18px 0!important;}
 .contact-card .cc-stat b{display:block;font-family:'Orbitron';font-size:14px;}
 .contact-card .cc-stat span{font-size:9.5px;color:#8b8f99;text-transform:uppercase;letter-spacing:.5px;}
 
-/* grid de metas — card com anel de progresso em gradiente */
 .goal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:8px;}
 .goal-card{
     background:linear-gradient(160deg,#1b2029,#161a22);border:1px solid #ffffff10;border-radius:14px;
@@ -537,13 +502,11 @@ hr{margin:18px 0!important;}
 .goal-fill.done{background:linear-gradient(90deg,#2fa574,#8a6bff);}
 .goal-card .gc-note{font-size:11.5px;color:#8b8f99;margin-top:9px;}
 
-/* legenda colorida de categorias de gasto */
 .legend-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:5px 0;}
 .legend-row .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
 .legend-row .lbl{flex:1;color:#ece6d7;}
 .legend-row .val{font-family:'IBM Plex Mono';font-weight:600;color:#8b8f99;}
 
-/* estado vazio — mais convidativo que um caption cinza solto */
 .empty-state{
     text-align:center;padding:34px 20px;border-radius:14px;border:1px dashed #ffffff1c;
     background:#ffffff05;margin-bottom:8px;
@@ -551,7 +514,6 @@ hr{margin:18px 0!important;}
 .empty-state .es-icon{font-size:26px;margin-bottom:8px;opacity:.85;}
 .empty-state .es-txt{font-size:12.5px;color:#8b8f99;}
 
-/* barra de progresso nativa do streamlit — deixa no mesmo tom neon */
 [data-testid="stProgress"] > div > div{background:linear-gradient(90deg,#2fa574,#00d4ff)!important;}
 </style>""", unsafe_allow_html=True)
 
@@ -753,11 +715,8 @@ def aba_ajustes(conta):
                     st.success("Senha trocada!")
         st.markdown('</div>', unsafe_allow_html=True)
 
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-# PÁGINA PÚBLICA DE AGENDAMENTO — o cliente marca o próprio horário,
-# sem login e sem o profissional precisar estar no PC.
+# PÁGINA PÚBLICA DE AGENDAMENTO
 # ══════════════════════════════════════════════════════════════════════════════
 def tela_publica_agendamento(usuario_prof):
     apply_css()
@@ -792,7 +751,6 @@ def tela_publica_agendamento(usuario_prof):
                 st.error("Preencha nome e WhatsApp.")
             else:
                 with db() as con:
-                    # evita corrida: confirma de novo que o horário segue livre antes de gravar
                     ainda_livre = not q1(con, "SELECT 1 FROM atendimentos WHERE usuario=? AND data=? AND hora=? AND status!='falta'",
                                          (usuario_prof, d.isoformat(), h))
                     if not ainda_livre:
@@ -826,7 +784,7 @@ def tela_publica_agendamento(usuario_prof):
             st.markdown(f"[📲 Avisar pelo WhatsApp também]({wa})")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAINEL ÚNICO — "Início" (recibo do dia + kpis + próximos + financeiro resumo)
+# PAINEL ÚNICO — "Início"
 # ══════════════════════════════════════════════════════════════════════════════
 def painel_inicio(conta, L):
     usuario = conta["usuario"]
@@ -853,8 +811,6 @@ def painel_inicio(conta, L):
             font-size:14px;color:#12151b;'>{ini(conta['nome'])}</div>
     </div>""", unsafe_allow_html=True)
 
-    # Link público de agendamento — o cliente marca sozinho, sem depender do
-    # profissional estar no computador.
     with st.expander("🔗 Seu link de agendamento — clientes marcam sozinhos", expanded=not conta.get("app_url")):
         url_salva = conta.get("app_url")
         url_detectada = st.session_state.get("_app_url")
@@ -872,9 +828,7 @@ def painel_inicio(conta, L):
         cbase, csave = st.columns([4, 1])
         base = cbase.text_input("Endereço do seu app (o que aparece na barra do navegador)",
                                  key="_base_url", placeholder="https://seu-app.streamlit.app",
-                                 help="Esse é o domínio que fica na barra do navegador quando VOCÊ acessa o app "
-                                      "publicado (não é o link do cliente). Depois de conferir, clique em Salvar — "
-                                      "ele fica guardado na sua conta e não precisa detectar de novo.")
+                                 help="Esse é o domínio que fica na barra do navegador quando VOCÊ acessa o app publicado.")
         csave.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
         if csave.button("💾 Salvar", use_container_width=True):
             limpo = base.strip().rstrip("/")
@@ -888,8 +842,7 @@ def painel_inicio(conta, L):
 
         base_valida = base.strip().startswith(("http://", "https://")) and "seu-app.streamlit.app" not in base and "localhost" not in base
         if not base_valida:
-            st.warning("⚠️ Preencha e salve o endereço real do seu app publicado acima — enquanto isso, o link "
-                        "abaixo **não vai funcionar** pros seus clientes.")
+            st.warning("⚠️ Preencha e salve o endereço real do seu app publicado acima — enquanto isso, o link abaixo **não vai funcionar** pros seus clientes.")
         link = f"{base.strip().rstrip('/')}/?agendar={conta['usuario']}" if base.strip() else ""
         cc1, cc2 = st.columns([3, 1])
         cc1.text_input("Link para compartilhar", value=link, key="_link_display", disabled=not base_valida)
@@ -924,7 +877,7 @@ def painel_inicio(conta, L):
     st.markdown(html, unsafe_allow_html=True)
     st.markdown('<div class="perf"></div>', unsafe_allow_html=True)
 
-    # Horários do dia — mostra na hora quais já têm agendamento
+    # Horários do dia
     ocupados = {a["hora"]: a for a in hoje_at}
     slots_html = '<div style="margin:14px 0 6px;">'
     for hh in range(7, 21):
@@ -957,7 +910,7 @@ def painel_inicio(conta, L):
     c3.markdown(f'<div class="ticket"><div class="l">Receita total</div><div class="v">{brl(rec_total)}</div><div class="s">histórico</div></div>', unsafe_allow_html=True)
     c4.markdown(f'<div class="ticket"><div class="l">{"Assinatura" if assinatura_valida(conta) else "Trial"}</div><div class="v">{dias_assin} dias</div><div class="s">restantes</div></div>', unsafe_allow_html=True)
 
-    # Financeiro do mês — receita, gasto, lucro, e quanto falta pra ficar no positivo
+    # Financeiro do mês
     ticket_medio = (rec_mes / len(conf_mes)) if conf_mes else 0
     fin_html = f"""<div class="fin-card"><h3>Financeiro do mês</h3>
         <div class="fin-row"><span class="l">Receita do mês</span><span class="v" style="color:#2fa574;">{brl(rec_mes)}</span></div>
@@ -973,7 +926,7 @@ def painel_inicio(conta, L):
     fin_html += "</div>"
     st.markdown(fin_html, unsafe_allow_html=True)
 
-    # Meta ativa — quanto falta pra bater
+    # Meta ativa
     with db() as con:
         meta = q1(con, "SELECT * FROM metas WHERE usuario=? AND concluida=0 ORDER BY id LIMIT 1", (usuario,))
     if meta:
@@ -1024,10 +977,6 @@ def aba_agenda(conta, L):
     with cf:
         st.markdown(f"##### Novo {L['item'].lower()}")
 
-        # A data fica FORA do formulário de propósito: assim, ao trocar o dia,
-        # a lista de horários abaixo já atualiza na hora mostrando só o que
-        # está livre nesse dia — sem isso, dava pra marcar duas pessoas no
-        # mesmo horário sem nenhum aviso.
         d = st.date_input("Data do agendamento", value=date.today(), key="_agenda_data")
         if d == date.today():
             rotulo_dia = "📍 Hoje"
@@ -1057,8 +1006,6 @@ def aba_agenda(conta, L):
                     st.error("Informe o nome.")
                 else:
                     with db() as con:
-                        # confere de novo bem na hora de gravar — evita a corrida de
-                        # dois agendamentos caindo no mesmo horário
                         ja_ocupado = q1(con, "SELECT 1 FROM atendimentos WHERE usuario=? AND data=? AND hora=? AND status!='falta'",
                                         (usuario, d.isoformat(), h))
                         if ja_ocupado:
@@ -1274,7 +1221,6 @@ def aba_metas(conta):
 usuario_publico = st.query_params.get("agendar")
 
 if usuario_publico:
-    # link público — o cliente cai direto aqui, sem precisar de login
     tela_publica_agendamento(usuario_publico)
     st.stop()
 
@@ -1294,9 +1240,6 @@ else:
         apply_css()
         L = LABELS[conta["tipo"]]
         render_sidebar(conta, L)
-        # Rede de segurança: se por qualquer motivo (recarregamento de
-        # página, tela estreita etc.) a sidebar ficar colapsada, isso a
-        # reabre sozinha — sem depender do usuário achar o botão escondido.
         components.html("""
         <script>
         (function(){
