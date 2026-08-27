@@ -10,7 +10,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
-import sqlite3, hashlib, secrets, base64, random, string, io, urllib.parse
+import sqlite3, hashlib, secrets, base64, random, string, io, urllib.parse, requests
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from contextlib import contextmanager
@@ -25,12 +25,20 @@ except ImportError:
 # CONSTANTES
 # ══════════════════════════════════════════════════════════════════════════════
 ADMIN_WHATSAPP = "5575991217749"
-PIX_CHAVE      = "75991217749"
+PIX_CHAVE      = "08294548537"   # CPF usado como chave Pix do recebedor
 VALOR_MENSAL   = 29.90
 TRIAL_DIAS     = 3
 DB_PATH        = "promanager.db"
 FOTOS_DIR      = Path("fotos")
 FOTOS_DIR.mkdir(exist_ok=True)
+
+def mp_token():
+    """Token do Mercado Pago, se configurado em Settings → Secrets no Streamlit Cloud.
+    Sem ele, o app cai automaticamente no fluxo manual (QR fixo + código por WhatsApp)."""
+    try:
+        return st.secrets.get("MP_ACCESS_TOKEN", "")
+    except Exception:
+        return ""
 
 LABELS = {
     "beleza": {
@@ -67,7 +75,11 @@ CREATE TABLE IF NOT EXISTS contas(
     usuario TEXT PRIMARY KEY, nome TEXT, senha_hash TEXT, senha_salt TEXT,
     tipo TEXT, profissao TEXT, negocio TEXT, cor TEXT, whatsapp TEXT,
     trial_fim TEXT, ativo INTEGER DEFAULT 0, validade TEXT,
-    codigo_ativacao TEXT, notif_enviada INTEGER DEFAULT 0, app_url TEXT
+    codigo_ativacao TEXT, notif_enviada INTEGER DEFAULT 0, app_url TEXT,
+    cpf TEXT, slogan TEXT, mp_payment_id TEXT
+);
+CREATE TABLE IF NOT EXISTS servicos(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, nome TEXT, valor REAL
 );
 CREATE TABLE IF NOT EXISTS contatos(
     id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, nome TEXT, telefone TEXT,
@@ -111,6 +123,11 @@ def init_db():
             con.execute("ALTER TABLE contas ADD COLUMN app_url TEXT")
         except sqlite3.OperationalError:
             pass
+        for coluna in ("cpf TEXT", "slogan TEXT", "mp_payment_id TEXT"):
+            try:
+                con.execute(f"ALTER TABLE contas ADD COLUMN {coluna}")
+            except sqlite3.OperationalError:
+                pass
 
 def q(con, sql, params=()):
     return con.execute(sql, params).fetchall()
@@ -118,6 +135,17 @@ def q(con, sql, params=()):
 def q1(con, sql, params=()):
     r = con.execute(sql, params).fetchone()
     return dict(r) if r else None
+
+def servicos_da_conta(usuario, tipo):
+    """Catálogo de serviços/valores do próprio profissional. Se ele nunca mexeu,
+    semeia com o catálogo padrão do tipo de negócio na primeira vez."""
+    with db() as con:
+        linhas = q(con, "SELECT * FROM servicos WHERE usuario=? ORDER BY nome", (usuario,))
+        if not linhas:
+            for nome, valor in LABELS[tipo]["opcoes"].items():
+                con.execute("INSERT INTO servicos(usuario,nome,valor) VALUES (?,?,?)", (usuario, nome, valor))
+            linhas = q(con, "SELECT * FROM servicos WHERE usuario=? ORDER BY nome", (usuario,))
+    return {r["nome"]: r["valor"] for r in linhas}
 
 def hash_senha(senha, salt=None):
     salt = salt or secrets.token_hex(16)
@@ -129,6 +157,64 @@ def gerar_codigo():
 
 def wa_link(numero, mensagem):
     return f"https://wa.me/{numero}?text={urllib.parse.quote(mensagem)}"
+
+def so_digitos(s):
+    return "".join(c for c in (s or "") if c.isdigit())
+
+def cpf_valido(cpf):
+    """Validação oficial do CPF (dígitos verificadores) — recusa sequências óbvias tipo 111.111.111-11."""
+    cpf = so_digitos(cpf)
+    if len(cpf) != 11 or cpf == cpf[0] * 11:
+        return False
+    for i in (9, 10):
+        soma = sum(int(cpf[n]) * ((i + 1) - n) for n in range(i))
+        dv = (soma * 10 % 11) % 10
+        if dv != int(cpf[i]):
+            return False
+    return True
+
+def cpf_fmt(cpf):
+    d = so_digitos(cpf)
+    return f"{d[0:3]}.{d[3:6]}.{d[6:9]}-{d[9:11]}" if len(d) == 11 else cpf
+
+# ── Mercado Pago Pix — cobrança automática. Sem MP_ACCESS_TOKEN configurado em
+#    Settings → Secrets, essas funções não são chamadas e o app usa o fluxo manual. ──
+def mp_criar_cobranca(conta):
+    token = mp_token()
+    if not token:
+        return None
+    try:
+        r = requests.post("https://api.mercadopago.com/v1/payments",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "transaction_amount": VALOR_MENSAL,
+                "payment_method_id": "pix",
+                "description": f"ProManager — assinatura mensal ({conta['usuario']})",
+                "payer": {
+                    "email": f"{conta['usuario']}@promanager.app",
+                    "first_name": conta["nome"].split()[0],
+                    "identification": {"type": "CPF", "number": so_digitos(conta.get("cpf") or "00000000000")},
+                },
+            }, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        with db() as con:
+            con.execute("UPDATE contas SET mp_payment_id=? WHERE usuario=?", (str(data["id"]), conta["usuario"]))
+        return data
+    except Exception:
+        return None
+
+def mp_status_pagamento(payment_id):
+    token = mp_token()
+    if not token or not payment_id:
+        return None
+    try:
+        r = requests.get(f"https://api.mercadopago.com/v1/payments/{payment_id}",
+                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS DE FORMATAÇÃO
@@ -521,63 +607,81 @@ def tela_login():
         <div style='font-size:12px;color:#8b8f99;letter-spacing:2.5px;text-transform:uppercase;margin-top:6px;'>Gestão para profissionais autônomos</div>
     </div>""", unsafe_allow_html=True)
 
-    cl, _, cr = st.columns([1, .08, 1])
-    with cl:
-        st.markdown('<div class="ticket">', unsafe_allow_html=True)
-        st.markdown("##### Entrar")
-        with st.form("f_login"):
-            usuario = st.text_input("Usuário")
-            senha = st.text_input("Senha", type="password")
-            if st.form_submit_button("Entrar", use_container_width=True):
-                with db() as con:
-                    conta = q1(con, "SELECT * FROM contas WHERE usuario=?", (usuario,))
-                if not conta:
-                    st.error("Usuário não encontrado.")
-                else:
-                    h, _ = hash_senha(senha, conta["senha_salt"])
-                    if h != conta["senha_hash"]:
-                        st.error("Senha incorreta.")
-                    else:
-                        st.session_state.usuario_logado = usuario
-                        st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+    if "_tela" not in st.session_state:
+        st.session_state["_tela"] = "login"
 
-    with cr:
-        st.markdown('<div class="ticket">', unsafe_allow_html=True)
-        st.markdown("##### Criar conta grátis")
-        with st.form("f_cadastro"):
-            tipo_disp = st.selectbox("Tipo de conta", ["💅 Beleza / Estética", "📚 Professor / Tutor"])
-            tipo = "beleza" if "Beleza" in tipo_disp else "professor"
-            c_nome = st.text_input("Nome completo")
-            c_usuario = st.text_input("Usuário (sem espaços)")
-            c_whats = st.text_input("WhatsApp")
-            c_prof = st.text_input("Especialidade / área", placeholder="Ex: Manicure, Matemática...")
-            c_neg = st.text_input("Nome do negócio")
-            c_cor = st.color_picker("Cor de destaque", value="#1f6f52")
-            c_senha = st.text_input("Criar senha", type="password")
-            c_conf = st.text_input("Confirmar senha", type="password")
-            if st.form_submit_button("Criar conta", use_container_width=True):
-                erros = []
-                if not c_nome.strip(): erros.append("Informe seu nome.")
-                if not c_usuario.strip() or " " in c_usuario: erros.append("Usuário inválido.")
-                if not c_whats.strip(): erros.append("Informe seu WhatsApp.")
-                if len(c_senha) < 4: erros.append("Senha com mínimo 4 caracteres.")
-                if c_senha != c_conf: erros.append("Senhas não conferem.")
-                with db() as con:
-                    if q1(con, "SELECT 1 FROM contas WHERE usuario=?", (c_usuario,)):
-                        erros.append("Usuário já existe.")
-                if erros:
-                    for e in erros: st.error(e)
-                else:
-                    h, salt = hash_senha(c_senha)
+    _, mid, _ = st.columns([1, 1.3, 1])
+    with mid:
+        if st.session_state["_tela"] == "login":
+            st.markdown('<div class="ticket">', unsafe_allow_html=True)
+            st.markdown("##### Entrar")
+            with st.form("f_login"):
+                usuario = st.text_input("Usuário")
+                senha = st.text_input("Senha", type="password")
+                if st.form_submit_button("Entrar", use_container_width=True):
                     with db() as con:
-                        con.execute("""INSERT INTO contas(usuario,nome,senha_hash,senha_salt,tipo,profissao,
-                            negocio,cor,whatsapp,trial_fim,codigo_ativacao) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                            (c_usuario.strip(), c_nome.strip(), h, salt, tipo, c_prof.strip() or tipo,
-                             c_neg.strip() or c_nome.strip(), c_cor, c_whats.strip(),
-                             (date.today()+timedelta(days=TRIAL_DIAS)).isoformat(), gerar_codigo()))
-                    st.success(f"Conta criada! Faça login com {c_usuario.strip()}. Trial de {TRIAL_DIAS} dias iniciado.")
-        st.markdown('</div>', unsafe_allow_html=True)
+                        conta = q1(con, "SELECT * FROM contas WHERE usuario=?", (usuario,))
+                    if not conta:
+                        st.error("Usuário não encontrado.")
+                    else:
+                        h, _ = hash_senha(senha, conta["senha_salt"])
+                        if h != conta["senha_hash"]:
+                            st.error("Senha incorreta.")
+                        else:
+                            st.session_state.usuario_logado = usuario
+                            st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+            if st.button("✨ Criar conta grátis", use_container_width=True, key="ir_cadastro"):
+                st.session_state["_tela"] = "cadastro"
+                st.rerun()
+
+        else:
+            st.markdown('<div class="ticket">', unsafe_allow_html=True)
+            st.markdown("##### Criar conta grátis")
+            with st.form("f_cadastro"):
+                tipo_disp = st.selectbox("Tipo de conta", ["💅 Beleza / Estética", "📚 Professor / Tutor"])
+                tipo = "beleza" if "Beleza" in tipo_disp else "professor"
+                c_nome = st.text_input("Nome completo")
+                c_cpf = st.text_input("CPF", placeholder="000.000.000-00")
+                c_usuario = st.text_input("Usuário (sem espaços)")
+                c_whats = st.text_input("WhatsApp")
+                c_prof = st.text_input("Especialidade / área", placeholder="Ex: Manicure, Matemática...")
+                c_neg = st.text_input("Nome do negócio")
+                c_cor = st.color_picker("Cor de destaque", value="#1f6f52")
+                c_senha = st.text_input("Criar senha", type="password")
+                c_conf = st.text_input("Confirmar senha", type="password")
+                if st.form_submit_button("Criar conta", use_container_width=True):
+                    erros = []
+                    if not c_nome.strip(): erros.append("Informe seu nome.")
+                    if not cpf_valido(c_cpf): erros.append("CPF inválido.")
+                    if not c_usuario.strip() or " " in c_usuario: erros.append("Usuário inválido.")
+                    if not c_whats.strip(): erros.append("Informe seu WhatsApp.")
+                    if len(c_senha) < 4: erros.append("Senha com mínimo 4 caracteres.")
+                    if c_senha != c_conf: erros.append("Senhas não conferem.")
+                    with db() as con:
+                        if q1(con, "SELECT 1 FROM contas WHERE usuario=?", (c_usuario,)):
+                            erros.append("Usuário já existe.")
+                        if cpf_valido(c_cpf) and q1(con, "SELECT 1 FROM contas WHERE cpf=?", (so_digitos(c_cpf),)):
+                            erros.append("Já existe uma conta cadastrada com esse CPF.")
+                    if erros:
+                        for e in erros: st.error(e)
+                    else:
+                        h, salt = hash_senha(c_senha)
+                        with db() as con:
+                            con.execute("""INSERT INTO contas(usuario,nome,senha_hash,senha_salt,tipo,profissao,
+                                negocio,cor,whatsapp,trial_fim,codigo_ativacao,cpf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                (c_usuario.strip(), c_nome.strip(), h, salt, tipo, c_prof.strip() or tipo,
+                                 c_neg.strip() or c_nome.strip(), c_cor, c_whats.strip(),
+                                 (date.today()+timedelta(days=TRIAL_DIAS)).isoformat(), gerar_codigo(),
+                                 so_digitos(c_cpf)))
+                        st.session_state["_tela"] = "login"
+                        st.success(f"Conta criada! Faça login com {c_usuario.strip()}. Trial de {TRIAL_DIAS} dias iniciado.")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+            if st.button("← Voltar para login", use_container_width=True, key="ir_login"):
+                st.session_state["_tela"] = "login"
+                st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TELA DE BLOQUEIO
@@ -585,49 +689,87 @@ def tela_login():
 def tela_bloqueio(conta):
     apply_css()
     usuario = conta["usuario"]
-    codigo = conta["codigo_ativacao"]
     motivo = "renovação" if conta["ativo"] else "trial"
-
-    msg_cliente = (f"Olá! Quero assinar o ProManager.\nNome: {conta['nome']}\nUsuário: @{usuario}\n"
-                   f"Acabei de fazer o Pix de R$ {VALOR_MENSAL:.2f} para {PIX_CHAVE}. Aguardo o código.")
-    link_cliente = wa_link(ADMIN_WHATSAPP, msg_cliente)
-    qr_bytes, payload = gerar_qr_pix(PIX_CHAVE, VALOR_MENSAL)
+    primeiro_nome = conta["nome"].split()[0]
 
     st.markdown(f"""
-    <div style='max-width:640px;margin:2rem auto;text-align:center;'>
-        <div style='font-family:Space Grotesk;font-size:1.7rem;font-weight:700;'>Período de {motivo} encerrado</div>
-        <div style='color:#8b8f99;font-size:13.5px;margin-top:6px;line-height:1.7;'>
-            Olá, {conta['nome'].split()[0]}! Continue por apenas
-            <b style='color:#2fa574;'>{brl(VALOR_MENSAL)}/mês</b> — acesso completo.
+    <div style='max-width:640px;margin:2rem auto 1.4rem;text-align:center;'>
+        <div style='font-size:2.2rem;margin-bottom:.3rem;'>🙏</div>
+        <div style='font-family:Space Grotesk;font-size:1.7rem;font-weight:700;'>Obrigado por usar o ProManager, {primeiro_nome}!</div>
+        <div style='color:#8b8f99;font-size:13.5px;margin-top:8px;line-height:1.7;'>
+            {"Seu período de teste chegou ao fim." if motivo=="trial" else "Sua assinatura venceu."}
+            Espero que tenha te ajudado a organizar {conta['negocio']}.<br>
+            Pra continuar com acesso completo, é só <b style='color:#2fa574;'>{brl(VALOR_MENSAL)}/mês</b> — o valor de um lanche.
         </div>
     </div>""", unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<div class="ticket">', unsafe_allow_html=True)
-        st.markdown("##### QR Code Pix")
-        if qr_bytes: st.image(qr_bytes, width=180)
-        st.text_area("Copia e cola:", value=payload, height=80)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown('<div class="ticket">', unsafe_allow_html=True)
-        st.markdown("##### Ativar")
-        st.markdown(f"[📲 Enviar comprovante no WhatsApp]({link_cliente})")
-        with st.form("f_ativar"):
-            cod = st.text_input("Código de ativação recebido")
-            if st.form_submit_button("Ativar minha conta", use_container_width=True):
-                if cod.strip().upper() == codigo.upper():
-                    ativar_conta(usuario)
-                    st.success("Conta ativada por 30 dias!")
-                    st.balloons()
-                    st.rerun()
-                else:
-                    st.error("Código inválido.")
-        st.markdown('</div>', unsafe_allow_html=True)
+    token = mp_token()
 
-    st.caption("Nota: esta liberação ainda é manual (você confere o Pix e libera o código). "
-               "Para automatizar, troque este formulário por um webhook do Mercado Pago/Asaas "
-               "que chama ativar_conta() assim que o pagamento é confirmado.")
+    if token:
+        # ── fluxo automático: cobrança real via Mercado Pago, checada a cada recarregamento ──
+        pagamento = mp_status_pagamento(conta.get("mp_payment_id"))
+        if not pagamento or pagamento.get("status") in ("cancelled", "rejected"):
+            pagamento = mp_criar_cobranca(conta)
+
+        if pagamento and pagamento.get("status") == "approved":
+            ativar_conta(usuario)
+            st.success("Pagamento identificado automaticamente! Sua conta foi liberada por 30 dias. 🎉")
+            st.balloons()
+            st.session_state.usuario_logado = usuario
+            st.rerun()
+        elif pagamento:
+            qr_b64 = pagamento.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code_base64")
+            copia_cola = pagamento.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code", "")
+            _, mid, _ = st.columns([1, 1.2, 1])
+            with mid:
+                st.markdown('<div class="ticket">', unsafe_allow_html=True)
+                st.markdown("##### Pague com Pix e a liberação acontece sozinha")
+                if qr_b64:
+                    st.image(base64.b64decode(qr_b64), width=220)
+                if copia_cola:
+                    st.text_area("Copia e cola:", value=copia_cola, height=90)
+                st.caption("⏳ Verificando o pagamento automaticamente... assim que cair, a página libera sozinha.")
+                st.markdown('</div>', unsafe_allow_html=True)
+            # recarrega a página a cada 8s pra checar se o pagamento já caiu
+            components.html("<script>setTimeout(()=>{try{window.parent.location.reload();}catch(e){}}, 8000);</script>",
+                             height=0, width=0)
+        else:
+            st.error("Não consegui gerar a cobrança automática agora. Tente atualizar a página, ou fale no WhatsApp abaixo.")
+
+    else:
+        # ── fluxo manual: QR fixo + código liberado por você pelo WhatsApp ──
+        codigo = conta["codigo_ativacao"]
+        msg_cliente = (f"Olá! Quero assinar o ProManager.\nNome: {conta['nome']}\nUsuário: @{usuario}\n"
+                       f"Acabei de fazer o Pix de R$ {VALOR_MENSAL:.2f} para {PIX_CHAVE}. Aguardo o código.")
+        link_cliente = wa_link(ADMIN_WHATSAPP, msg_cliente)
+        qr_bytes, payload = gerar_qr_pix(PIX_CHAVE, VALOR_MENSAL)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown('<div class="ticket">', unsafe_allow_html=True)
+            st.markdown("##### QR Code Pix")
+            if qr_bytes: st.image(qr_bytes, width=180)
+            st.text_area("Copia e cola:", value=payload, height=80)
+            st.caption(f"Chave Pix (CPF): {cpf_fmt(PIX_CHAVE)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown('<div class="ticket">', unsafe_allow_html=True)
+            st.markdown("##### Fale comigo pelo WhatsApp")
+            st.markdown(f"[📲 Enviar comprovante e falar com o suporte]({link_cliente})")
+            st.caption(f"WhatsApp: {ADMIN_WHATSAPP[2:4]} {ADMIN_WHATSAPP[4:9]}-{ADMIN_WHATSAPP[9:]}")
+            with st.form("f_ativar"):
+                cod = st.text_input("Código de ativação recebido")
+                if st.form_submit_button("Ativar minha conta", use_container_width=True):
+                    if cod.strip().upper() == codigo.upper():
+                        ativar_conta(usuario)
+                        st.success("Conta ativada por 30 dias!")
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("Código inválido.")
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.caption("💡 Essa liberação está manual porque a conta do Mercado Pago ainda não foi conectada. "
+                   "Configurando MP_ACCESS_TOKEN em Settings → Secrets, a liberação passa a ser automática.")
 
     if st.button("← Voltar ao login"):
         st.session_state.usuario_logado = None
@@ -650,6 +792,7 @@ def render_sidebar(conta, L):
                 font-weight:700;color:#12151b;margin:0 auto;'>{ini(conta['nome'])}</div>
             <div style='font-family:Space Grotesk;font-weight:700;margin-top:8px;font-size:14px;'>{conta['nome']}</div>
             <div style='font-size:11.5px;color:#8b8f99;'>{L['icone']} {conta['profissao']}</div>
+            {f"<div style='font-size:10.5px;color:#5c7fa8;font-style:italic;margin-top:2px;'>“{conta['slogan']}”</div>" if conta.get('slogan') else ""}
         </div>""", unsafe_allow_html=True)
 
         if assinatura_valida(conta):
@@ -682,10 +825,14 @@ def aba_ajustes(conta):
         st.markdown('<div class="fin-card">', unsafe_allow_html=True)
         st.markdown("**Dados do negócio**")
         nn = st.text_input("Nome do negócio", value=conta["negocio"], key="cfg_nn")
+        slg = st.text_input("Slogan (aparece no menu e no link de agendamento)",
+                             value=conta.get("slogan") or "", key="cfg_slogan",
+                             placeholder="Ex: Seu sorriso, minha prioridade")
         nco = st.color_picker("Cor de destaque", value=conta["cor"], key="cfg_cor")
         if st.button("Salvar alterações"):
             with db() as con:
-                con.execute("UPDATE contas SET negocio=?, cor=? WHERE usuario=?", (nn, nco, usuario))
+                con.execute("UPDATE contas SET negocio=?, cor=?, slogan=? WHERE usuario=?",
+                            (nn, nco, slg.strip(), usuario))
             st.success("Salvo!"); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
@@ -708,6 +855,37 @@ def aba_ajustes(conta):
                     st.success("Senha trocada!")
         st.markdown('</div>', unsafe_allow_html=True)
 
+    L = LABELS[conta["tipo"]]
+    st.markdown(f"##### 🏷️ Meus {L['item'].lower()}s e valores")
+    st.caption(f"O que estiver aqui é o que o cliente vê e o preço que já vem preenchido, tanto na sua Agenda quanto no link público de agendamento.")
+    with db() as con:
+        servicos = q(con, "SELECT * FROM servicos WHERE usuario=? ORDER BY nome", (usuario,))
+    if not servicos:
+        servicos_da_conta(usuario, conta["tipo"])  # semeia o catálogo padrão na primeira vez
+        st.rerun()
+
+    for s in servicos:
+        cn, cv, cd = st.columns([3, 1.3, 0.6])
+        cn.markdown(f"<div style='padding-top:8px;'>{s['nome']}</div>", unsafe_allow_html=True)
+        cv.markdown(f"<div style='padding-top:8px;text-align:right;font-family:IBM Plex Mono;color:#2fa574;'>{brl(s['valor'])}</div>", unsafe_allow_html=True)
+        if cd.button("🗑", key=f"del_serv_{s['id']}"):
+            with db() as con:
+                con.execute("DELETE FROM servicos WHERE id=?", (s["id"],))
+            st.rerun()
+
+    with st.expander(f"➕ Adicionar {L['item'].lower()}"):
+        with st.form("f_servico", clear_on_submit=True):
+            sn2 = st.text_input(f"Nome do {L['item'].lower()}")
+            sv2 = st.number_input("Valor (R$)", min_value=0.0, step=5.0, value=50.0)
+            if st.form_submit_button("Adicionar"):
+                if sn2.strip():
+                    with db() as con:
+                        con.execute("INSERT INTO servicos(usuario,nome,valor) VALUES (?,?,?)",
+                                    (usuario, sn2.strip(), float(sv2)))
+                    st.success("Adicionado!"); st.rerun()
+                else:
+                    st.error("Informe um nome.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PÁGINA PÚBLICA DE AGENDAMENTO
 # ══════════════════════════════════════════════════════════════════════════════
@@ -720,15 +898,20 @@ def tela_publica_agendamento(usuario_prof):
         return
 
     L = LABELS[conta["tipo"]]
+    catalogo = servicos_da_conta(usuario_prof, conta["tipo"])
+    slogan_html = f"<div style='font-size:11.5px;color:#5c7fa8;font-style:italic;margin-top:3px;'>“{conta['slogan']}”</div>" if conta.get("slogan") else ""
     st.markdown(f"""<div style='text-align:center;padding:1.8rem 0 1.4rem;'>
         <div class='brand-title' style='font-size:2rem;font-weight:700;'>{conta['negocio']}</div>
+        {slogan_html}
         <div style='font-size:12.5px;color:#8b8f99;margin-top:4px;'>{L['icone']} agende seu horário — sem precisar ligar ou chamar no WhatsApp</div>
     </div>""", unsafe_allow_html=True)
 
     _, mid, _ = st.columns([1, 2, 1])
     with mid:
         st.markdown('<div class="ticket">', unsafe_allow_html=True)
-        item = st.selectbox(L["item"], list(L["opcoes"].keys()))
+        opcoes_fmt = [f"{nome} — {brl(valor)}" for nome, valor in catalogo.items()]
+        escolha = st.selectbox(L["item"], opcoes_fmt) if opcoes_fmt else None
+        item = escolha.rsplit(" — ", 1)[0] if escolha else None
         d = st.date_input("Escolha o dia", value=date.today(), min_value=date.today(),
                            max_value=date.today() + timedelta(days=60))
         livres = horarios_livres(usuario_prof, d.isoformat())
@@ -740,7 +923,7 @@ def tela_publica_agendamento(usuario_prof):
         nome = st.text_input("Seu nome completo")
         tel = st.text_input("Seu WhatsApp")
 
-        if st.button("Confirmar agendamento", use_container_width=True, disabled=not livres):
+        if st.button("Confirmar agendamento", use_container_width=True, disabled=not livres or not item):
             if not nome.strip() or not tel.strip():
                 st.error("Preencha nome e WhatsApp.")
             else:
@@ -758,7 +941,7 @@ def tela_publica_agendamento(usuario_prof):
                             con.execute("UPDATE contatos SET telefone=? WHERE id=?", (tel.strip(), existe["id"]))
                         con.execute("""INSERT INTO atendimentos(usuario,contato,item,valor,data,hora,status,origem)
                             VALUES (?,?,?,?,?,?,'aguardando','cliente')""",
-                            (usuario_prof, nome.strip(), item, float(L["opcoes"].get(item, 0)), d.isoformat(), h))
+                            (usuario_prof, nome.strip(), item, float(catalogo.get(item, 0)), d.isoformat(), h))
                         st.session_state["_agendado_ok"] = f"{nome.strip()} · {item} · {d.strftime('%d/%m')} às {h}"
                         st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -795,8 +978,10 @@ def painel_inicio(conta, L):
         todos_at = q(con, "SELECT * FROM atendimentos WHERE usuario=?", (usuario,))
 
     c_head, c_av = st.columns([5, 1])
+    slogan_html = f"<div style='font-size:12px;color:#5c7fa8;font-style:italic;margin-top:1px;'>“{conta['slogan']}”</div>" if conta.get("slogan") else ""
     c_head.markdown(f"""<div style='padding:.4rem 0 .6rem;'>
         <div class='brand-title' style='font-size:1.6rem;font-weight:700;'>{conta['negocio']}</div>
+        {slogan_html}
         <div style='font-size:12.5px;color:#8b8f99;margin-top:2px;'>{datetime.today().strftime('%A, %d de %B')}</div>
     </div>""", unsafe_allow_html=True)
     c_av.markdown(f"""<div style='display:flex;justify-content:flex-end;padding-top:.5rem;'>
@@ -955,6 +1140,7 @@ def painel_inicio(conta, L):
 # ══════════════════════════════════════════════════════════════════════════════
 def aba_agenda(conta, L):
     usuario = conta["usuario"]
+    catalogo = servicos_da_conta(usuario, conta["tipo"])
     with db() as con:
         contatos = [r["nome"] for r in q(con, "SELECT nome FROM contatos WHERE usuario=? ORDER BY nome", (usuario,))]
         hoje_at = q(con, "SELECT * FROM atendimentos WHERE usuario=? AND data=? ORDER BY hora", (usuario, hoje_iso))
@@ -978,8 +1164,8 @@ def aba_agenda(conta, L):
         with st.form("f_novo_at", clear_on_submit=True):
             escolha = st.selectbox(L["contato"], ["-- Novo --"] + contatos)
             novo_nome = st.text_input(f"Nome do novo {L['contato'].lower()}") if escolha == "-- Novo --" else None
-            item = st.selectbox(L["item"], list(L["opcoes"].keys()))
-            valor = st.number_input("Valor (R$)", min_value=0.0, value=float(L["opcoes"].get(item, 50)), step=5.0)
+            item = st.selectbox(L["item"], list(catalogo.keys()) or ["Cadastre em Ajustes"])
+            valor = st.number_input("Valor (R$)", min_value=0.0, value=float(catalogo.get(item, 50)), step=5.0)
             if livres:
                 h = st.selectbox(f"Horário disponível — {rotulo_dia.replace('📍 ', '')}", livres)
             else:
@@ -1084,7 +1270,7 @@ def aba_contatos(conta, L):
         with st.form("f_contato", clear_on_submit=True):
             n = st.text_input("Nome")
             t = st.text_input("Telefone")
-            fav = st.selectbox(f"{L['item']} favorito", list(L["opcoes"].keys()))
+            fav = st.selectbox(f"{L['item']} favorito", list(servicos_da_conta(usuario, conta['tipo']).keys()))
             if st.form_submit_button("Cadastrar"):
                 if n.strip():
                     with db() as con:
