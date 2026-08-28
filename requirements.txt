@@ -2,3 +2,6 @@ streamlit>=1.50
 pandas
 plotly
 qrcode
+requests
+libsql-experimental
+ 
