@@ -21,6 +21,12 @@ try:
 except ImportError:
     HAS_QR = False
 
+try:
+    import libsql_experimental as libsql
+    HAS_LIBSQL = True
+except ImportError:
+    HAS_LIBSQL = False
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CONSTANTES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -29,8 +35,6 @@ PIX_CHAVE      = "08294548537"   # CPF usado como chave Pix do recebedor
 VALOR_MENSAL   = 29.90
 TRIAL_DIAS     = 3
 DB_PATH        = "promanager.db"
-FOTOS_DIR      = Path("fotos")
-FOTOS_DIR.mkdir(exist_ok=True)
 
 def mp_token():
     """Token do Mercado Pago, se configurado em Settings → Secrets no Streamlit Cloud.
@@ -64,6 +68,8 @@ LABELS = {
     },
 }
 
+LIMIAR_CLIENTE_FIEL = 5   # visitas sem faltas a partir daqui já conta como cliente fiel
+
 CATEGORIAS_GASTO = ["Produtos / Insumos","Material didático","Aluguel","Energia elétrica",
     "Internet / Telefone","Plataformas online","Equipamento","Marketing","Pessoal","Outros"]
 
@@ -76,7 +82,7 @@ CREATE TABLE IF NOT EXISTS contas(
     tipo TEXT, profissao TEXT, negocio TEXT, cor TEXT, whatsapp TEXT,
     trial_fim TEXT, ativo INTEGER DEFAULT 0, validade TEXT,
     codigo_ativacao TEXT, notif_enviada INTEGER DEFAULT 0, app_url TEXT,
-    cpf TEXT, slogan TEXT, mp_payment_id TEXT
+    cpf TEXT, slogan TEXT, mp_payment_id TEXT, foto_base64 TEXT
 );
 CREATE TABLE IF NOT EXISTS servicos(
     id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, nome TEXT, valor REAL
@@ -101,40 +107,63 @@ CREATE TABLE IF NOT EXISTS metas(
 );
 """
 
+def turso_config():
+    """Credenciais do Turso, se configuradas em Settings → Secrets.
+    Sem elas, cai no SQLite local — que funciona, mas perde os dados quando
+    o servidor gratuito do Streamlit Cloud reinicia."""
+    try:
+        url = st.secrets.get("TURSO_DATABASE_URL", "")
+        token = st.secrets.get("TURSO_AUTH_TOKEN", "")
+        return (url, token) if (url and token and HAS_LIBSQL) else (None, None)
+    except Exception:
+        return (None, None)
+
 @contextmanager
 def db():
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys=ON")
+    url, token = turso_config()
+    if url:
+        con = libsql.connect("promanager_replica.db", sync_url=url, auth_token=token)
+        con.sync()
+    else:
+        con = sqlite3.connect(DB_PATH)
+        con.execute("PRAGMA foreign_keys=ON")
     try:
         yield con
         con.commit()
+        if url:
+            con.sync()
     finally:
         con.close()
 
 def init_db():
     with db() as con:
-        con.executescript(SCHEMA)
-        try:
-            con.execute("ALTER TABLE atendimentos ADD COLUMN origem TEXT DEFAULT 'profissional'")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            con.execute("ALTER TABLE contas ADD COLUMN app_url TEXT")
-        except sqlite3.OperationalError:
-            pass
-        for coluna in ("cpf TEXT", "slogan TEXT", "mp_payment_id TEXT"):
+        for stmt in [s.strip() for s in SCHEMA.split(";") if s.strip()]:
+            con.execute(stmt)
+        for stmt in [
+            "ALTER TABLE atendimentos ADD COLUMN origem TEXT DEFAULT 'profissional'",
+            "ALTER TABLE contas ADD COLUMN app_url TEXT",
+            "ALTER TABLE contas ADD COLUMN cpf TEXT",
+            "ALTER TABLE contas ADD COLUMN slogan TEXT",
+            "ALTER TABLE contas ADD COLUMN mp_payment_id TEXT",
+            "ALTER TABLE contas ADD COLUMN foto_base64 TEXT",
+        ]:
             try:
-                con.execute(f"ALTER TABLE contas ADD COLUMN {coluna}")
-            except sqlite3.OperationalError:
-                pass
+                con.execute(stmt)
+            except Exception:
+                pass  # coluna já existe
+
+def _linhas_para_dicts(cursor, linhas):
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, l)) for l in linhas]
 
 def q(con, sql, params=()):
-    return con.execute(sql, params).fetchall()
+    cur = con.execute(sql, params)
+    return _linhas_para_dicts(cur, cur.fetchall())
 
 def q1(con, sql, params=()):
-    r = con.execute(sql, params).fetchone()
-    return dict(r) if r else None
+    cur = con.execute(sql, params)
+    linhas = _linhas_para_dicts(cur, cur.fetchall())
+    return linhas[0] if linhas else None
 
 def servicos_da_conta(usuario, tipo):
     """Catálogo de serviços/valores do próprio profissional. Se ele nunca mexeu,
@@ -780,19 +809,26 @@ def tela_bloqueio(conta):
 # ══════════════════════════════════════════════════════════════════════════════
 NAV_ITEMS = [("inicio", "🏠", "Início"), ("agenda", "📅", "Agenda"),
              ("contatos", "👥", None), ("financeiro", "💳", "Financeiro"),
-             ("metas", "🎯", "Metas"), ("ajustes", "⚙️", "Ajustes")]
+             ("relatorios", "📊", "Relatórios"), ("metas", "🎯", "Metas"), ("ajustes", "⚙️", "Ajustes")]
 
 def render_sidebar(conta, L):
     if "nav" not in st.session_state:
         st.session_state.nav = "inicio"
     with st.sidebar:
-        st.markdown(f"""<div style='text-align:center;padding:6px 0 14px;'>
-            <div style='width:58px;height:58px;border-radius:14px;background:{conta['cor']};display:flex;
+        if conta.get("foto_base64"):
+            avatar_html = f"<img src='data:image/jpeg;base64,{conta['foto_base64']}' style='width:58px;height:58px;border-radius:14px;object-fit:cover;margin:0 auto;display:block;border:2px solid {conta['cor']};'>"
+        else:
+            avatar_html = f"""<div style='width:58px;height:58px;border-radius:14px;background:{conta['cor']};display:flex;
                 align-items:center;justify-content:center;font-family:Space Grotesk;font-size:20px;
-                font-weight:700;color:#12151b;margin:0 auto;'>{ini(conta['nome'])}</div>
+                font-weight:700;color:#12151b;margin:0 auto;'>{ini(conta['nome'])}</div>"""
+        slogan_html = (f"<div style='font-size:10.5px;color:#5c7fa8;font-style:italic;margin-top:2px;'>“{conta['slogan']}”</div>"
+                        if conta.get('slogan') else
+                        "<div style='font-size:10px;color:#5c6470;margin-top:2px;'>💬 adicione um slogan em Ajustes</div>")
+        st.markdown(f"""<div style='text-align:center;padding:6px 0 14px;'>
+            {avatar_html}
             <div style='font-family:Space Grotesk;font-weight:700;margin-top:8px;font-size:14px;'>{conta['nome']}</div>
             <div style='font-size:11.5px;color:#8b8f99;'>{L['icone']} {conta['profissao']}</div>
-            {f"<div style='font-size:10.5px;color:#5c7fa8;font-style:italic;margin-top:2px;'>“{conta['slogan']}”</div>" if conta.get('slogan') else ""}
+            {slogan_html}
         </div>""", unsafe_allow_html=True)
 
         if assinatura_valida(conta):
@@ -824,6 +860,14 @@ def aba_ajustes(conta):
     with c1:
         st.markdown('<div class="fin-card">', unsafe_allow_html=True)
         st.markdown("**Dados do negócio**")
+        if conta.get("foto_base64"):
+            st.image(base64.b64decode(conta["foto_base64"]), width=90)
+        foto = st.file_uploader("Foto ou logo do estabelecimento", type=["jpg", "jpeg", "png"], key="cfg_foto")
+        if foto is not None:
+            with db() as con:
+                con.execute("UPDATE contas SET foto_base64=? WHERE usuario=?",
+                            (base64.b64encode(foto.read()).decode(), usuario))
+            st.success("Foto atualizada!"); st.rerun()
         nn = st.text_input("Nome do negócio", value=conta["negocio"], key="cfg_nn")
         slg = st.text_input("Slogan (aparece no menu e no link de agendamento)",
                              value=conta.get("slogan") or "", key="cfg_slogan",
@@ -900,7 +944,10 @@ def tela_publica_agendamento(usuario_prof):
     L = LABELS[conta["tipo"]]
     catalogo = servicos_da_conta(usuario_prof, conta["tipo"])
     slogan_html = f"<div style='font-size:11.5px;color:#5c7fa8;font-style:italic;margin-top:3px;'>“{conta['slogan']}”</div>" if conta.get("slogan") else ""
+    foto_html = (f"<img src='data:image/jpeg;base64,{conta['foto_base64']}' style='width:64px;height:64px;border-radius:16px;object-fit:cover;margin:0 auto 8px;display:block;border:2px solid {conta['cor']};'>"
+                 if conta.get("foto_base64") else "")
     st.markdown(f"""<div style='text-align:center;padding:1.8rem 0 1.4rem;'>
+        {foto_html}
         <div class='brand-title' style='font-size:2rem;font-weight:700;'>{conta['negocio']}</div>
         {slogan_html}
         <div style='font-size:12.5px;color:#8b8f99;margin-top:4px;'>{L['icone']} agende seu horário — sem precisar ligar ou chamar no WhatsApp</div>
@@ -985,9 +1032,9 @@ def painel_inicio(conta, L):
         <div style='font-size:12.5px;color:#8b8f99;margin-top:2px;'>{datetime.today().strftime('%A, %d de %B')}</div>
     </div>""", unsafe_allow_html=True)
     c_av.markdown(f"""<div style='display:flex;justify-content:flex-end;padding-top:.5rem;'>
-        <div style='width:42px;height:42px;border-radius:11px;background:{conta['cor']};display:flex;
-            align-items:center;justify-content:center;font-family:Space Grotesk;font-weight:700;
-            font-size:14px;color:#12151b;'>{ini(conta['nome'])}</div>
+        {f"<img src='data:image/jpeg;base64,{conta['foto_base64']}' style='width:42px;height:42px;border-radius:11px;object-fit:cover;border:1px solid {conta['cor']};'>"
+          if conta.get('foto_base64') else
+          f"<div style='width:42px;height:42px;border-radius:11px;background:{conta['cor']};display:flex;align-items:center;justify-content:center;font-family:Space Grotesk;font-weight:700;font-size:14px;color:#12151b;'>{ini(conta['nome'])}</div>"}
     </div>""", unsafe_allow_html=True)
 
     with st.expander("🔗 Seu link de agendamento — clientes marcam sozinhos", expanded=not conta.get("app_url")):
@@ -1245,15 +1292,19 @@ def aba_contatos(conta, L):
                 chip_cls, chip_txt = "chip-r", "🚨 risco"
             elif c["faltas"] >= 1:
                 chip_cls, chip_txt = "chip-a", "⚠️ atenção"
+            elif c["visitas"] >= LIMIAR_CLIENTE_FIEL:
+                chip_cls, chip_txt = "chip-g", "⭐ fiel"
             else:
-                chip_cls, chip_txt = "chip-g", "✅ fiel"
+                chip_cls, chip_txt = "chip-g", "✅ ok"
             cor = cor_avatar(c["nome"])
+            tel_html = (f'<a href="{wa_link(so_digitos(c["telefone"]), f"Olá {c["nome"].split()[0]}!")}" target="_blank" style="color:#7fd6b3;text-decoration:none;">📲 {c["telefone"]}</a>'
+                        if c["telefone"] else "sem telefone")
             cards += f"""<div class="contact-card">
                 <div class="cc-top">
                     <div class="cc-avatar" style="background:{cor}22;color:{cor};border-color:{cor}55;">{ini(c['nome'])}</div>
                     <div style="min-width:0;">
                         <div class="cc-name">{c['nome']}<span class="chip {chip_cls}">{chip_txt}</span></div>
-                        <div class="cc-meta">{c['telefone'] or 'sem telefone'} · {c['item_fav'] or L['item']+' não definido'}</div>
+                        <div class="cc-meta">{tel_html} · {c['item_fav'] or L['item']+' não definido'}</div>
                     </div>
                 </div>
                 <div class="cc-stats">
@@ -1349,6 +1400,86 @@ def aba_financeiro(conta):
 # ══════════════════════════════════════════════════════════════════════════════
 # ABA METAS
 # ══════════════════════════════════════════════════════════════════════════════
+def aba_relatorios(conta, L):
+    usuario = conta["usuario"]
+    with db() as con:
+        conf = q(con, "SELECT * FROM atendimentos WHERE usuario=? AND status='confirmado'", (usuario,))
+        gastos = q(con, "SELECT * FROM gastos WHERE usuario=?", (usuario,))
+
+    page_header("📊", "Relatórios", "Histórico completo do seu negócio, mês a mês")
+
+    if not conf and not gastos:
+        empty_state("📊", "Ainda não há atendimentos confirmados nem gastos registrados pra gerar relatórios.")
+        return
+
+    rec_total = sum(a["valor"] for a in conf)
+    gt_total = sum(g["valor"] for g in gastos)
+    lucro_total = rec_total - gt_total
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(f'<div class="ticket"><div class="l">💰 Faturamento total</div><div class="v green">{brl(rec_total)}</div><div class="s">todo o histórico</div></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="ticket"><div class="l">🧾 Gasto total</div><div class="v red">{brl(gt_total)}</div><div class="s">todo o histórico</div></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="ticket"><div class="l">📈 Lucro total</div><div class="v {"green" if lucro_total>=0 else "red"}">{brl(lucro_total)}</div><div class="s">receita − gastos</div></div>', unsafe_allow_html=True)
+
+    # agregação por mês
+    meses = {}
+    for a in conf:
+        m = a["data"][:7]
+        meses.setdefault(m, {"receita": 0.0, "qtd": 0})
+        meses[m]["receita"] += a["valor"]
+        meses[m]["qtd"] += 1
+    for g in gastos:
+        m = g["data"][:7]
+        meses.setdefault(m, {"receita": 0.0, "qtd": 0})
+        meses[m].setdefault("gasto", 0.0)
+    for m in meses:
+        meses[m].setdefault("gasto", 0.0)
+    for g in gastos:
+        meses[g["data"][:7]]["gasto"] += g["valor"]
+
+    mes_recorde = max(meses.items(), key=lambda kv: kv[1]["qtd"])[0] if meses else None
+    mes_recorde_fat = max(meses.items(), key=lambda kv: kv[1]["receita"])[0] if meses else None
+
+    # serviço/item com maior retorno
+    por_item = {}
+    for a in conf:
+        por_item[a["item"]] = por_item.get(a["item"], 0.0) + a["valor"]
+    item_campeao = max(por_item.items(), key=lambda kv: kv[1]) if por_item else None
+
+    # categoria de gasto que mais pesou
+    por_cat = {}
+    for g in gastos:
+        por_cat[g["categoria"]] = por_cat.get(g["categoria"], 0.0) + g["valor"]
+    cat_campea = max(por_cat.items(), key=lambda kv: kv[1]) if por_cat else None
+
+    def nome_mes(m):
+        try: return datetime.strptime(m, "%Y-%m").strftime("%B/%Y")
+        except Exception: return m
+
+    st.markdown("<br>##### Destaques", unsafe_allow_html=True)
+    d1, d2, d3, d4 = st.columns(4)
+    d1.markdown(f'<div class="fin-card"><h3>📅 Mês mais movimentado</h3><div style="font-size:15px;font-weight:700;">{nome_mes(mes_recorde) if mes_recorde else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{meses[mes_recorde]["qtd"] if mes_recorde else 0} atendimentos</div></div>', unsafe_allow_html=True)
+    d2.markdown(f'<div class="fin-card"><h3>💵 Mês de maior faturamento</h3><div style="font-size:15px;font-weight:700;">{nome_mes(mes_recorde_fat) if mes_recorde_fat else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{brl(meses[mes_recorde_fat]["receita"]) if mes_recorde_fat else brl(0)}</div></div>', unsafe_allow_html=True)
+    d3.markdown(f'<div class="fin-card"><h3>🏆 {L["item"]} com mais retorno</h3><div style="font-size:15px;font-weight:700;">{item_campeao[0] if item_campeao else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{brl(item_campeao[1]) if item_campeao else brl(0)} gerados</div></div>', unsafe_allow_html=True)
+    d4.markdown(f'<div class="fin-card"><h3>🧾 Categoria que mais pesou</h3><div style="font-size:15px;font-weight:700;">{cat_campea[0] if cat_campea else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{brl(cat_campea[1]) if cat_campea else brl(0)} gastos</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>##### Receita × Gasto × Lucro por mês", unsafe_allow_html=True)
+    ordenados = sorted(meses.items())
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="Receita", x=[nome_mes(m) for m, _ in ordenados], y=[v["receita"] for _, v in ordenados], marker_color="#2fa574"))
+    fig.add_trace(go.Bar(name="Gasto", x=[nome_mes(m) for m, _ in ordenados], y=[v["gasto"] for _, v in ordenados], marker_color="#d9584a"))
+    fig.add_trace(go.Scatter(name="Lucro", x=[nome_mes(m) for m, _ in ordenados], y=[v["receita"]-v["gasto"] for _, v in ordenados],
+                              mode="lines+markers", line=dict(color="#00d4ff", width=2)))
+    fig.update_layout(barmode="group", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#ece6d7"), margin=dict(t=10, b=10, l=10, r=10), height=320,
+        legend=dict(font=dict(color="#ece6d7")), xaxis=dict(gridcolor="#ffffff10"), yaxis=dict(gridcolor="#ffffff10"))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown("##### Ranking de serviços por retorno", unsafe_allow_html=True)
+    rank = sorted(por_item.items(), key=lambda kv: -kv[1])
+    df_rank = pd.DataFrame([{L["item"]: nome, "Total gerado": brl(valor), "Vezes realizado": sum(1 for a in conf if a["item"] == nome)} for nome, valor in rank])
+    st.dataframe(df_rank, use_container_width=True, hide_index=True)
+
 def aba_metas(conta):
     usuario = conta["usuario"]
     with db() as con:
@@ -1419,5 +1550,6 @@ else:
         elif nav == "agenda": aba_agenda(conta, L)
         elif nav == "contatos": aba_contatos(conta, L)
         elif nav == "financeiro": aba_financeiro(conta)
+        elif nav == "relatorios": aba_relatorios(conta, L)
         elif nav == "metas": aba_metas(conta)
         elif nav == "ajustes": aba_ajustes(conta)
