@@ -129,10 +129,17 @@ def db():
         con.execute("PRAGMA foreign_keys=ON")
     try:
         yield con
-        con.commit()
-        if url:
-            con.sync()
     finally:
+        # commit acontece aqui no finally (não logo após o yield) de propósito:
+        # se algum st.rerun() disparar DENTRO do "with db() as con:" por engano,
+        # a exceção do Streamlit ainda passa por este finally antes de fechar a
+        # conexão — então a gravação nunca mais fica pra trás de novo.
+        try:
+            con.commit()
+            if url:
+                con.sync()
+        except Exception:
+            pass
         con.close()
 
 def init_db():
@@ -838,6 +845,7 @@ def render_sidebar(conta, L):
             st.session_state.usuario_logado = None
             st.session_state.nav = "inicio"
             st.rerun()
+        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-08-29-c</div>", unsafe_allow_html=True)
 
 def aba_ajustes(conta):
     usuario = conta["usuario"]
@@ -960,11 +968,12 @@ def tela_publica_agendamento(usuario_prof):
             if not nome.strip() or not tel.strip():
                 st.error("Preencha nome e WhatsApp.")
             else:
+                horario_ocupado = False
                 with db() as con:
                     ainda_livre = not q1(con, "SELECT 1 FROM atendimentos WHERE usuario=? AND data=? AND hora=? AND status!='falta'",
                                          (usuario_prof, d.isoformat(), h))
                     if not ainda_livre:
-                        st.error("Esse horário acabou de ser preenchido — escolha outro.")
+                        horario_ocupado = True
                     else:
                         existe = q1(con, "SELECT id FROM contatos WHERE usuario=? AND nome=?", (usuario_prof, nome.strip()))
                         if not existe:
@@ -975,8 +984,13 @@ def tela_publica_agendamento(usuario_prof):
                         con.execute("""INSERT INTO atendimentos(usuario,contato,item,valor,data,hora,status,origem)
                             VALUES (?,?,?,?,?,?,'aguardando','cliente')""",
                             (usuario_prof, nome.strip(), item, float(catalogo.get(item, 0)), d.isoformat(), h))
-                        st.session_state["_agendado_ok"] = f"{nome.strip()} · {item} · {d.strftime('%d/%m')} às {h}"
-                        st.rerun()
+                # o "with" já fechou aqui em cima — o commit no banco já aconteceu de verdade
+                # antes de recarregar a página (por isso o rerun fica fora do bloco)
+                if horario_ocupado:
+                    st.error("Esse horário acabou de ser preenchido — escolha outro.")
+                else:
+                    st.session_state["_agendado_ok"] = f"{nome.strip()} · {item} · {d.strftime('%d/%m')} às {h}"
+                    st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
         if st.session_state.get("_agendado_ok"):
@@ -1208,11 +1222,12 @@ def aba_agenda(conta, L):
                 if not nome_final:
                     st.error("Informe o nome.")
                 else:
+                    ocupado = False
                     with db() as con:
                         ja_ocupado = q1(con, "SELECT 1 FROM atendimentos WHERE usuario=? AND data=? AND hora=? AND status!='falta'",
                                         (usuario, d.isoformat(), h))
                         if ja_ocupado:
-                            st.error(f"Esse horário ({h}) acabou de ser ocupado — escolha outro.")
+                            ocupado = True
                         else:
                             if escolha == "-- Novo --":
                                 con.execute("INSERT INTO contatos(usuario,nome,item_fav) VALUES (?,?,?)",
@@ -1220,8 +1235,12 @@ def aba_agenda(conta, L):
                             con.execute("""INSERT INTO atendimentos(usuario,contato,item,valor,data,hora,duracao,status,obs)
                                 VALUES (?,?,?,?,?,?,?, 'aguardando', ?)""",
                                 (usuario, nome_final, item, float(valor), d.isoformat(), h, dur, obs))
-                            st.success(f"{nome_final} — {item} em {d.strftime('%d/%m')} às {h}")
-                            st.rerun()
+                    # commit já aconteceu antes daqui — só então recarrega
+                    if ocupado:
+                        st.error(f"Esse horário ({h}) acabou de ser ocupado — escolha outro.")
+                    else:
+                        st.success(f"{nome_final} — {item} em {d.strftime('%d/%m')} às {h}")
+                        st.rerun()
 
     with cl:
         st.markdown("##### Agenda de hoje")
