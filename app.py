@@ -362,14 +362,21 @@ def horarios_livres(usuario, data_iso):
 # INIT
 # ══════════════════════════════════════════════════════════════════════════════
 # init_db() cria tabelas e roda ALTER TABLE de migração — precisa acontecer só
-# UMA VEZ por servidor, não a cada clique. st.cache_resource garante isso: sem
-# ele, todo clique reabria o banco e refazia essas checagens à toa.
+# UMA VEZ por servidor, não a cada clique (por isso o st.cache_resource). MAS:
+# a Streamlit Cloud às vezes só recarrega o script sem reiniciar o processo
+# inteiro, e nesse caso um cache_resource "sem parâmetro" nunca reexecuta —
+# então uma tabela nova adicionada ao esquema podia nunca chegar a ser criada.
+# Por isso a função recebe SCHEMA_VERSION: toda vez que o esquema do banco
+# mudar (nova tabela/coluna), aumente esse número — isso invalida o cache
+# automaticamente e garante que a migração rode de novo, mesmo sem reboot manual.
+SCHEMA_VERSION = 2  # v2: adicionada a tabela "sessoes" (login persistente)
+
 @st.cache_resource
-def _preparar_banco_uma_vez():
+def _preparar_banco_uma_vez(versao):
     init_db()
     return True
 
-_preparar_banco_uma_vez()
+_preparar_banco_uma_vez(SCHEMA_VERSION)
 if "usuario_logado" not in st.session_state:
     # tenta restaurar a sessão a partir do token salvo na URL antes de exigir login de novo
     st.session_state.usuario_logado = usuario_da_sessao(st.query_params.get("sid"))
@@ -859,7 +866,8 @@ def tela_bloqueio(conta):
 # ══════════════════════════════════════════════════════════════════════════════
 NAV_ITEMS = [("inicio", "🏠", "Início"), ("agenda", "📅", "Agenda"),
              ("contatos", "👥", None), ("financeiro", "💳", "Financeiro"),
-             ("relatorios", "📊", "Relatórios"), ("metas", "🎯", "Metas"), ("ajustes", "⚙️", "Ajustes")]
+             ("relatorios", "📊", "Relatórios"), ("metas", "🎯", "Metas"),
+             ("ajustes", "⚙️", "Ajustes"), ("ajuda", "❓", "Ajuda")]
 
 def render_sidebar(conta, L):
     if "nav" not in st.session_state:
@@ -1540,6 +1548,53 @@ def aba_relatorios(conta, L):
     df_rank = pd.DataFrame([{L["item"]: nome, "Total gerado": brl(valor), "Vezes realizado": sum(1 for a in conf if a["item"] == nome)} for nome, valor in rank])
     st.dataframe(df_rank, use_container_width=True, hide_index=True)
 
+def aba_ajuda(conta, L):
+    page_header("❓", "Ajuda", "Guia rápido de como usar o ProManager")
+
+    with st.expander("🆕 Primeiros passos", expanded=True):
+        st.markdown(f"""
+1. Vá em **⚙️ Ajustes** e confira **"Meus {L['item'].lower()}s e valores"** — é de lá que vem o preço pronto sempre que alguém agenda.
+2. Ainda em Ajustes, envie uma foto do seu negócio e escreva um slogan, se quiser.
+3. Volte pro **🏠 Início** e abra o card **"🔗 Seu link de agendamento"** — cole ali o endereço real do seu app publicado (não o `localhost`) e clique em Salvar.
+4. Compartilhe esse link (ou o QR Code) com seus {L['contato_pl'].lower()} — a partir daí eles marcam sozinhos.
+""")
+
+    with st.expander(f"📅 Como funciona a Agenda"):
+        st.markdown(f"""
+- Escolha a data, veja os horários **já livres de verdade** (o app nunca deixa marcar em cima de outro horário), escolha o {L['contato'].lower()} e o {L['item'].lower()}, e clique em Agendar.
+- **⏳ Aguardando** → ainda vai acontecer.
+- **✓ Confirmado** → clique depois de atender. Só o que está confirmado entra no financeiro.
+- **✗ {L['falta_verbo']}** → clique se a pessoa não apareceu. Isso conta no histórico dela.
+- 📲 O telefone do {L['contato'].lower()} é clicável — abre o WhatsApp direto.
+""")
+
+    with st.expander("🔗 Sobre o link de agendamento"):
+        st.markdown(f"""
+- Quem agenda pelo link já entra automaticamente na sua lista de {L['contato_pl'].lower()} — sem você precisar cadastrar nada.
+- O agendamento feito pelo link aparece na sua Agenda com um 🔗 do lado do nome.
+- Esqueceu de cadastrar um {L['item'].lower()} antes de compartilhar o link? Sem problema — assim que você adicionar em Ajustes, ele já aparece pro próximo que abrir o link.
+""")
+
+    with st.expander("💳 Financeiro e Relatórios"):
+        st.markdown("""
+- Receita, gasto e lucro contam só o que está **confirmado** — atendimentos "aguardando" ainda não entram na conta.
+- Em **Relatórios** você vê o histórico completo: faturamento total, mês mais forte, o que mais rendeu, e onde mais gastou.
+""")
+
+    with st.expander("⭐ Como funciona o \"cliente fiel\""):
+        st.markdown(f"""
+- A partir de **5 visitas sem faltar**, o {L['contato'].lower()} já ganha a estrelinha ⭐ fiel sozinho, sem você precisar marcar nada.
+- 1-2 faltas → ⚠️ atenção. 3 ou mais faltas → 🚨 risco — bom sinal pra pedir sinal antecipado da próxima vez.
+""")
+
+    with st.expander("💰 Sobre a assinatura"):
+        st.markdown(f"""
+- {TRIAL_DIAS} dias grátis pra testar tudo.
+- Depois disso, R$ {VALOR_MENSAL:.2f}/mês. A própria tela de bloqueio já mostra o QR Code do Pix e o WhatsApp de suporte.
+""")
+
+    st.caption("Ainda com dúvida? Fale pelo WhatsApp de suporte que aparece na tela de bloqueio, ou peça o guia completo em PDF/Word pra quem te ajudou a montar o app.")
+
 def aba_metas(conta):
     usuario = conta["usuario"]
     with db() as con:
@@ -1614,3 +1669,4 @@ else:
         elif nav == "relatorios": aba_relatorios(conta, L)
         elif nav == "metas": aba_metas(conta)
         elif nav == "ajustes": aba_ajustes(conta)
+        elif nav == "ajuda": aba_ajuda(conta, L)
