@@ -338,17 +338,20 @@ hoje_iso = date.today().isoformat()
 
 st.set_page_config(page_title="ProManager", page_icon="🧾", layout="wide", initial_sidebar_state="expanded")
 
-# Todo HTML deste app é enviado via st.markdown(..., unsafe_allow_html=True) com linhas
-# indentadas (por legibilidade no código-fonte). O Markdown, por padrão, trata uma linha
-# com 4+ espaços no início como bloco de código — e mostra o HTML cru em vez de renderizar.
-# Este remendo tira a indentação de cada linha antes de mandar pro Streamlit, sem precisar
-# reescrever cada uma das dezenas de chamadas markdown() do arquivo.
-_markdown_original = st.markdown
-def _markdown_sem_indentacao(body, *args, **kwargs):
+# Todo HTML deste app é enviado via <container>.markdown(..., unsafe_allow_html=True) com
+# linhas indentadas (por legibilidade no código-fonte). O Markdown, por padrão, trata uma
+# linha com 4+ espaços no início como bloco de código — e mostra o HTML cru em vez de
+# renderizar. Este remendo tira a indentação de cada linha antes de mandar pro Streamlit.
+# É aplicado na CLASSE DeltaGenerator (não só em st.markdown) porque colunas, sidebar,
+# expanders etc. são objetos próprios com seu próprio .markdown() — corrigir só st.markdown
+# não bastava e deixava passar batido em c_head.markdown(), st.sidebar.markdown() etc.
+from streamlit.delta_generator import DeltaGenerator
+_markdown_original = DeltaGenerator.markdown
+def _markdown_sem_indentacao(self, body="", *args, **kwargs):
     if kwargs.get("unsafe_allow_html") and isinstance(body, str) and "\n" in body:
         body = "\n".join(linha.lstrip() for linha in body.split("\n"))
-    return _markdown_original(body, *args, **kwargs)
-st.markdown = _markdown_sem_indentacao
+    return _markdown_original(self, body, *args, **kwargs)
+DeltaGenerator.markdown = _markdown_sem_indentacao
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CSS
