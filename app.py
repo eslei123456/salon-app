@@ -332,7 +332,15 @@ def horarios_livres(usuario, data_iso):
 # ══════════════════════════════════════════════════════════════════════════════
 # INIT
 # ══════════════════════════════════════════════════════════════════════════════
-init_db()
+# init_db() cria tabelas e roda ALTER TABLE de migração — precisa acontecer só
+# UMA VEZ por servidor, não a cada clique. st.cache_resource garante isso: sem
+# ele, todo clique reabria o banco e refazia essas checagens à toa.
+@st.cache_resource
+def _preparar_banco_uma_vez():
+    init_db()
+    return True
+
+_preparar_banco_uma_vez()
 if "usuario_logado" not in st.session_state: st.session_state.usuario_logado = None
 hoje_iso = date.today().isoformat()
 
@@ -359,7 +367,7 @@ DeltaGenerator.markdown = _markdown_sem_indentacao
 def apply_css():
     st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12151b!important;color:#ece6d7!important;}
 .stApp{background:#12151b!important;}
