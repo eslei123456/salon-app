@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS metas(
     id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, nome TEXT, valor REAL,
     inicio TEXT, concluida INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS sessoes(
+    token TEXT PRIMARY KEY, usuario TEXT, criado_em TEXT
+);
 """
 
 def turso_config():
@@ -321,6 +324,32 @@ def dias_restantes(iso):
     try: return max(0, (date.fromisoformat(iso) - date.today()).days)
     except Exception: return 0
 
+# ── "lembrar de mim" — sem isso, cada reinício do servidor (deploy novo,
+#    app dormindo por inatividade) desloga todo mundo, porque a sessão do
+#    Streamlit vive só na memória. Guardando um token no banco + na URL,
+#    o login sobrevive a reinícios normais. ──
+def criar_sessao(usuario):
+    token = secrets.token_hex(24)
+    with db() as con:
+        con.execute("INSERT INTO sessoes(token,usuario,criado_em) VALUES (?,?,?)",
+                    (token, usuario, datetime.now().isoformat()))
+    st.query_params["sid"] = token
+    return token
+
+def usuario_da_sessao(token):
+    if not token:
+        return None
+    with db() as con:
+        row = q1(con, "SELECT usuario FROM sessoes WHERE token=?", (token,))
+    return row["usuario"] if row else None
+
+def encerrar_sessao(token):
+    if token:
+        with db() as con:
+            con.execute("DELETE FROM sessoes WHERE token=?", (token,))
+    if "sid" in st.query_params:
+        del st.query_params["sid"]
+
 def horarios_livres(usuario, data_iso):
     todos = [f"{hh:02d}:{mm:02d}" for hh in range(7, 21) for mm in (0, 30)]
     with db() as con:
@@ -341,7 +370,9 @@ def _preparar_banco_uma_vez():
     return True
 
 _preparar_banco_uma_vez()
-if "usuario_logado" not in st.session_state: st.session_state.usuario_logado = None
+if "usuario_logado" not in st.session_state:
+    # tenta restaurar a sessão a partir do token salvo na URL antes de exigir login de novo
+    st.session_state.usuario_logado = usuario_da_sessao(st.query_params.get("sid"))
 hoje_iso = date.today().isoformat()
 
 st.set_page_config(page_title="ProManager", page_icon="🧾", layout="wide", initial_sidebar_state="expanded")
@@ -373,31 +404,43 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif!important;background:#12
 .stApp{background:#12151b!important;}
 #MainMenu,footer{visibility:hidden!important;height:0!important;}
 
-/* MENU SEMPRE ABERTO — remove totalmente a opção de recolher/expandir */
+/* MENU SEMPRE ABERTO — só em telas largas (computador). No celular, deixamos o
+   Streamlit usar o comportamento nativo dele (menu recolhível, responsivo) —
+   travar 260px fixos num celular de ~380px de largura deixava quase sem espaço
+   pro conteúdo, e era por isso que precisava do "modo site para PC". */
 header[data-testid="stHeader"] {
     background: transparent !important;
     z-index: 99999 !important;
 }
 
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"],
-[data-testid="stSidebarCollapseButton"],
-button[aria-label="Open sidebar"],
-button[aria-label="Close sidebar"],
-button[aria-label="Collapse sidebar"] {
-    display: none !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
+@media (min-width: 768px) {
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapseButton"],
+    button[aria-label="Open sidebar"],
+    button[aria-label="Close sidebar"],
+    button[aria-label="Collapse sidebar"] {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+    }
+    [data-testid="stSidebar"] {
+        min-width: 260px !important;
+        max-width: 260px !important;
+        transform: none !important;
+        visibility: visible !important;
+    }
+    [data-testid="stSidebar"][aria-expanded="false"] {
+        min-width: 260px !important;
+        margin-left: 0 !important;
+    }
 }
-[data-testid="stSidebar"] {
-    min-width: 260px !important;
-    max-width: 260px !important;
-    transform: none !important;
-    visibility: visible !important;
-}
-[data-testid="stSidebar"][aria-expanded="false"] {
-    min-width: 260px !important;
-    margin-left: 0 !important;
+
+/* Ajustes finos só pra tela de celular (menor que 768px) */
+@media (max-width: 767px) {
+    .block-container { padding-left: .8rem !important; padding-right: .8rem !important; }
+    .ticket .v { font-size: 16px !important; }
+    .brand-title { font-size: 1.6rem !important; }
 }
 
 .block-container{padding-top:1.6rem!important;max-width:1180px!important;}
@@ -662,6 +705,7 @@ def tela_login():
                             st.error("Senha incorreta.")
                         else:
                             st.session_state.usuario_logado = usuario
+                            criar_sessao(usuario)
                             st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
@@ -749,6 +793,7 @@ def tela_bloqueio(conta):
             st.success("Pagamento identificado automaticamente! Sua conta foi liberada por 30 dias. 🎉")
             st.balloons()
             st.session_state.usuario_logado = usuario
+            criar_sessao(usuario)
             st.rerun()
         elif pagamento:
             qr_b64 = pagamento.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code_base64")
@@ -805,6 +850,7 @@ def tela_bloqueio(conta):
                    "Configurando MP_ACCESS_TOKEN em Settings → Secrets, a liberação passa a ser automática.")
 
     if st.button("← Voltar ao login"):
+        encerrar_sessao(st.query_params.get("sid"))
         st.session_state.usuario_logado = None
         st.rerun()
 
@@ -853,10 +899,11 @@ def render_sidebar(conta, L):
 
         st.markdown("<div style='height:14px;'></div><hr>", unsafe_allow_html=True)
         if st.button("↩  Sair da conta", use_container_width=True, key="nav_sair"):
+            encerrar_sessao(st.query_params.get("sid"))
             st.session_state.usuario_logado = None
             st.session_state.nav = "inicio"
             st.rerun()
-        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-08-29-c</div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-08-29-d</div>", unsafe_allow_html=True)
 
 def aba_ajustes(conta):
     usuario = conta["usuario"]
@@ -1549,6 +1596,7 @@ else:
     with db() as con:
         conta = q1(con, "SELECT * FROM contas WHERE usuario=?", (usuario,))
     if not conta:
+        encerrar_sessao(st.query_params.get("sid"))
         st.session_state.usuario_logado = None; st.rerun()
     elif not acesso_ok(conta):
         apply_css()
