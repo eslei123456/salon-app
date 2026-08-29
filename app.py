@@ -331,31 +331,17 @@ hoje_iso = date.today().isoformat()
 
 st.set_page_config(page_title="ProManager", page_icon="🧾", layout="wide", initial_sidebar_state="expanded")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DETECÇÃO AUTOMÁTICA DA URL PÚBLICA
-# ══════════════════════════════════════════════════════════════════════════════
-def detectar_url_base():
-    if "_app_url" in st.session_state:
-        return
-    param = st.query_params.get("_u")
-    if param:
-        st.session_state["_app_url"] = param if param.startswith(("http://", "https://")) else f"https://{param}"
-        return
-    components.html("""
-    <script>
-    (function(){
-        try{
-            const loc = window.parent.location;
-            if (loc.search.indexOf('_u=') === -1) {
-                const sep = loc.search ? '&' : '?';
-                loc.replace(loc.pathname + loc.search + sep + '_u=' + encodeURIComponent(loc.host) + loc.hash);
-            }
-        }catch(e){}
-    })();
-    </script>
-    """, height=0, width=0)
-
-detectar_url_base()
+# Todo HTML deste app é enviado via st.markdown(..., unsafe_allow_html=True) com linhas
+# indentadas (por legibilidade no código-fonte). O Markdown, por padrão, trata uma linha
+# com 4+ espaços no início como bloco de código — e mostra o HTML cru em vez de renderizar.
+# Este remendo tira a indentação de cada linha antes de mandar pro Streamlit, sem precisar
+# reescrever cada uma das dezenas de chamadas markdown() do arquivo.
+_markdown_original = st.markdown
+def _markdown_sem_indentacao(body, *args, **kwargs):
+    if kwargs.get("unsafe_allow_html") and isinstance(body, str) and "\n" in body:
+        body = "\n".join(linha.lstrip() for linha in body.split("\n"))
+    return _markdown_original(body, *args, **kwargs)
+st.markdown = _markdown_sem_indentacao
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CSS
@@ -1039,17 +1025,14 @@ def painel_inicio(conta, L):
 
     with st.expander("🔗 Seu link de agendamento — clientes marcam sozinhos", expanded=not conta.get("app_url")):
         url_salva = conta.get("app_url")
-        url_detectada = st.session_state.get("_app_url")
 
         if url_salva:
             st.caption(f"🔗 Endereço salvo na sua conta: **{url_salva}**")
-        elif url_detectada:
-            st.caption(f"✅ Detectamos **{url_detectada}** pelo seu navegador — confira e clique em Salvar pra fixar na conta.")
         else:
             st.caption("✍️ Cole abaixo o endereço que aparece na barra do navegador quando você acessa o app (não o localhost).")
 
         if "_base_url" not in st.session_state:
-            st.session_state["_base_url"] = url_salva or url_detectada or ""
+            st.session_state["_base_url"] = url_salva or ""
 
         cbase, csave = st.columns([4, 1])
         base = cbase.text_input("Endereço do seu app (o que aparece na barra do navegador)",
