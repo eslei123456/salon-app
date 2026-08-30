@@ -32,7 +32,7 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════════════
 ADMIN_WHATSAPP = "5575991217749"
 PIX_CHAVE      = "08294548537"   # CPF usado como chave Pix do recebedor
-VALOR_MENSAL   = 29.90
+VALOR_MENSAL   = 20.00
 TRIAL_DIAS     = 3
 DB_PATH        = "promanager.db"
 
@@ -770,37 +770,26 @@ def tela_login():
 # ══════════════════════════════════════════════════════════════════════════════
 # TELA DE BLOQUEIO
 # ══════════════════════════════════════════════════════════════════════════════
-def tela_bloqueio(conta):
-    apply_css()
+def render_pagamento(conta, contexto="bloqueio"):
+    """Card de pagamento (Pix automático via Mercado Pago, ou QR fixo manual como reserva).
+    Reaproveitado tanto na tela de bloqueio (acesso vencido) quanto em Ajustes → Assinatura
+    (pra quem quer pagar antes mesmo do trial acabar, tipo alguém que testou 2 dias e já
+    quer virar assinante)."""
     usuario = conta["usuario"]
-    motivo = "renovação" if conta["ativo"] else "trial"
-    primeiro_nome = conta["nome"].split()[0]
-
-    st.markdown(f"""
-    <div style='max-width:640px;margin:2rem auto 1.4rem;text-align:center;'>
-        <div style='font-size:2.2rem;margin-bottom:.3rem;'>🙏</div>
-        <div style='font-family:Space Grotesk;font-size:1.7rem;font-weight:700;'>Obrigado por usar o ProManager, {primeiro_nome}!</div>
-        <div style='color:#8b8f99;font-size:13.5px;margin-top:8px;line-height:1.7;'>
-            {"Seu período de teste chegou ao fim." if motivo=="trial" else "Sua assinatura venceu."}
-            Espero que tenha te ajudado a organizar {conta['negocio']}.<br>
-            Pra continuar com acesso completo, é só <b style='color:#2fa574;'>{brl(VALOR_MENSAL)}/mês</b> — o valor de um lanche.
-        </div>
-    </div>""", unsafe_allow_html=True)
-
     token = mp_token()
 
     if token:
-        # ── fluxo automático: cobrança real via Mercado Pago, checada a cada recarregamento ──
         pagamento = mp_status_pagamento(conta.get("mp_payment_id"))
         if not pagamento or pagamento.get("status") in ("cancelled", "rejected"):
             pagamento = mp_criar_cobranca(conta)
 
         if pagamento and pagamento.get("status") == "approved":
             ativar_conta(usuario)
-            st.success("Pagamento identificado automaticamente! Sua conta foi liberada por 30 dias. 🎉")
+            st.success("Pagamento identificado automaticamente! Sua conta foi liberada por 30 dias a partir de agora. 🎉")
             st.balloons()
-            st.session_state.usuario_logado = usuario
-            criar_sessao(usuario)
+            if contexto == "bloqueio":
+                st.session_state.usuario_logado = usuario
+                criar_sessao(usuario)
             st.rerun()
         elif pagamento:
             qr_b64 = pagamento.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code_base64")
@@ -812,17 +801,15 @@ def tela_bloqueio(conta):
                 if qr_b64:
                     st.image(base64.b64decode(qr_b64), width=220)
                 if copia_cola:
-                    st.text_area("Copia e cola:", value=copia_cola, height=90)
-                st.caption("⏳ Verificando o pagamento automaticamente... assim que cair, a página libera sozinha.")
+                    st.text_area("Copia e cola:", value=copia_cola, height=90, key=f"cc_{contexto}")
+                st.caption("⏳ Verificando o pagamento automaticamente... assim que cair, libera sozinho — não precisa recarregar nem avisar ninguém.")
                 st.markdown('</div>', unsafe_allow_html=True)
-            # recarrega a página a cada 8s pra checar se o pagamento já caiu
             components.html("<script>setTimeout(()=>{try{window.parent.location.reload();}catch(e){}}, 8000);</script>",
                              height=0, width=0)
         else:
             st.error("Não consegui gerar a cobrança automática agora. Tente atualizar a página, ou fale no WhatsApp abaixo.")
 
     else:
-        # ── fluxo manual: QR fixo + código liberado por você pelo WhatsApp ──
         codigo = conta["codigo_ativacao"]
         msg_cliente = (f"Olá! Quero assinar o ProManager.\nNome: {conta['nome']}\nUsuário: @{usuario}\n"
                        f"Acabei de fazer o Pix de R$ {VALOR_MENSAL:.2f} para {PIX_CHAVE}. Aguardo o código.")
@@ -834,7 +821,7 @@ def tela_bloqueio(conta):
             st.markdown('<div class="ticket">', unsafe_allow_html=True)
             st.markdown("##### QR Code Pix")
             if qr_bytes: st.image(qr_bytes, width=180)
-            st.text_area("Copia e cola:", value=payload, height=80)
+            st.text_area("Copia e cola:", value=payload, height=80, key=f"pix_{contexto}")
             st.caption(f"Chave Pix (CPF): {cpf_fmt(PIX_CHAVE)}")
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
@@ -842,12 +829,12 @@ def tela_bloqueio(conta):
             st.markdown("##### Fale comigo pelo WhatsApp")
             st.markdown(f"[📲 Enviar comprovante e falar com o suporte]({link_cliente})")
             st.caption(f"WhatsApp: {ADMIN_WHATSAPP[2:4]} {ADMIN_WHATSAPP[4:9]}-{ADMIN_WHATSAPP[9:]}")
-            with st.form("f_ativar"):
+            with st.form(f"f_ativar_{contexto}"):
                 cod = st.text_input("Código de ativação recebido")
                 if st.form_submit_button("Ativar minha conta", use_container_width=True):
                     if cod.strip().upper() == codigo.upper():
                         ativar_conta(usuario)
-                        st.success("Conta ativada por 30 dias!")
+                        st.success("Conta ativada por 30 dias a partir de agora!")
                         st.balloons()
                         st.rerun()
                     else:
@@ -855,6 +842,27 @@ def tela_bloqueio(conta):
             st.markdown('</div>', unsafe_allow_html=True)
         st.caption("💡 Essa liberação está manual porque a conta do Mercado Pago ainda não foi conectada. "
                    "Configurando MP_ACCESS_TOKEN em Settings → Secrets, a liberação passa a ser automática.")
+
+def tela_bloqueio(conta):
+    apply_css()
+    motivo = "renovação" if conta["ativo"] else "trial"
+    primeiro_nome = conta["nome"].split()[0]
+
+    st.markdown(f"""
+    <div style='max-width:640px;margin:2rem auto 1.4rem;text-align:center;'>
+        <div style='font-size:2.2rem;margin-bottom:.3rem;'>🙏</div>
+        <div style='font-family:Space Grotesk;font-size:1.7rem;font-weight:700;'>Obrigado por usar o ProManager, {primeiro_nome}!</div>
+        <div style='color:#8b8f99;font-size:13.5px;margin-top:8px;line-height:1.7;'>
+            {"Seu período de teste chegou ao fim." if motivo=="trial" else "Sua assinatura venceu."}
+            Espero que tenha te ajudado a organizar {conta['negocio']}.<br>
+            Pra continuar com acesso completo, é só <b style='color:#2fa574;'>{brl(VALOR_MENSAL)}/mês</b> — o valor de um lanche.<br>
+            <span style='font-size:12px;'>Tudo que você já cadastrou — clientes, agenda, financeiro — continua salvo, do jeitinho que estava.</span>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    render_pagamento(conta, contexto="bloqueio")
+
+    usuario = conta["usuario"]
 
     if st.button("← Voltar ao login"):
         encerrar_sessao(st.query_params.get("sid"))
@@ -916,6 +924,21 @@ def render_sidebar(conta, L):
 def aba_ajustes(conta):
     usuario = conta["usuario"]
     page_header("⚙️", "Ajustes", "Personalize seu negócio e sua conta")
+
+    st.markdown('<div class="fin-card">', unsafe_allow_html=True)
+    st.markdown("**💳 Assinatura**")
+    if assinatura_valida(conta):
+        d = dias_restantes(conta["validade"])
+        st.markdown(f"Status: **ativa** · vence em **{d} dia(s)** (dia {conta['validade'][8:10]}/{conta['validade'][5:7]})")
+        st.caption("Pode renovar quando quiser, mesmo antes de vencer — o novo pagamento sempre define 30 dias contados a partir de hoje (não acumula com os dias que ainda restavam).")
+    else:
+        d = dias_restantes(conta["trial_fim"])
+        st.markdown(f"Status: **em teste grátis** · restam **{d} dia(s)**")
+        st.caption("Quer assinar agora mesmo, sem esperar o teste acabar? Pode — o pagamento libera 30 dias completos a partir de hoje, e nada do que você já cadastrou se perde.")
+    with st.expander("💰 Quero pagar / renovar agora"):
+        render_pagamento(conta, contexto="assinatura")
+    st.markdown('</div>', unsafe_allow_html=True)
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<div class="fin-card">', unsafe_allow_html=True)
@@ -1181,7 +1204,7 @@ def painel_inicio(conta, L):
     slots_html += '</div>'
     st.markdown("##### Horários de hoje", unsafe_allow_html=True)
     st.markdown(slots_html, unsafe_allow_html=True)
-    st.caption("🟩 ocupado · ⬜ livre · 🟥 falta — passe o mouse num horário pra ver quem está agendado")
+    st.caption("🟩 livre · ⬜ ocupado · 🟥 falta — passe o mouse num horário pra ver quem está agendado")
 
     rec_sem = sum(a["valor"] for a in conf_sem)
     rec_total = sum(a["valor"] for a in todos_at if a["status"] == "confirmado")
