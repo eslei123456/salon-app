@@ -744,6 +744,11 @@ def tela_apresentacao():
             st.session_state["_tela"] = "cadastro"
             st.rerun()
 
+    st.markdown("""
+    <div style='text-align:center;padding:2.4rem 0 .6rem;font-size:11.5px;color:#4a5058;'>
+        Criado por <b style='color:#6b7280;'>Eslei Barreto</b>
+    </div>""", unsafe_allow_html=True)
+
 def tela_login():
     apply_css()
     if st.button("← Sobre o ProManager", key="voltar_apresentacao"):
