@@ -682,10 +682,75 @@ hr{margin:18px 0!important;}
 # ══════════════════════════════════════════════════════════════════════════════
 # TELA DE LOGIN / CADASTRO
 # ══════════════════════════════════════════════════════════════════════════════
+def tela_apresentacao():
+    apply_css()
+    st.markdown(f"""
+    <div style='text-align:center;padding:3rem 0 1.6rem;'>
+        <div class='brand-title' style='font-size:3.2rem;font-weight:700;'>ProManager</div>
+        <div style='font-size:13px;color:#8b8f99;letter-spacing:2.5px;text-transform:uppercase;margin-top:8px;'>Gestão para profissionais autônomos</div>
+        <div style='max-width:560px;margin:20px auto 0;font-size:15px;color:#c7c2b4;line-height:1.7;'>
+            Agenda, financeiro e clientes num só lugar — e um link pra seus próprios clientes
+            marcarem o horário sozinhos, sem você precisar ficar respondendo mensagem o dia inteiro.
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    _, mid, _ = st.columns([1, 1.4, 1])
+    with mid:
+        c1, c2 = st.columns(2)
+        if c1.button("✨ Criar conta grátis", use_container_width=True, key="land_cadastro"):
+            st.session_state["_pagina_publica"] = "auth"
+            st.session_state["_tela"] = "cadastro"
+            st.rerun()
+        if c2.button("Já tenho conta → Entrar", use_container_width=True, key="land_login"):
+            st.session_state["_pagina_publica"] = "auth"
+            st.session_state["_tela"] = "login"
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    feats = [
+        ("📅", "Agenda sem esforço", "Cadastre seus horários e serviços uma vez. O sistema mostra sozinho quais estão livres."),
+        ("🔗", "Cliente marca sozinho", "Compartilhe um link ou QR Code — seus clientes escolhem o horário e o serviço direto, sem você precisar responder mensagem."),
+        ("💳", "Financeiro automático", "Receita, gastos e lucro calculados sozinhos, com relatório mês a mês e o serviço que mais rende."),
+        ("⭐", "Faltas e clientes fiéis", "O sistema já marca sozinho quem é cliente fiel e quem costuma faltar."),
+    ]
+    cols = st.columns(4)
+    for col, (icon, titulo, desc) in zip(cols, feats):
+        col.markdown(f"""<div class="fin-card" style="min-height:190px;">
+            <div style="font-size:1.6rem;margin-bottom:8px;">{icon}</div>
+            <div style="font-family:'Space Grotesk';font-weight:700;font-size:14px;margin-bottom:6px;">{titulo}</div>
+            <div style="font-size:12px;color:#8b8f99;line-height:1.6;">{desc}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    _, midp, _ = st.columns([1, 1, 1])
+    with midp:
+        st.markdown(f"""<div class="receipt">
+            <div class="receipt-head"><span class="lbl">Plano único</span><span class="val">sem pegadinha</span></div>
+            <div class="dashed"></div>
+            <div class="line-item"><div class="who"><b>{TRIAL_DIAS} dias grátis</b><span>pra testar tudo, sem cartão</span></div><span class="val">R$ 0</span></div>
+            <div class="line-item"><div class="who"><b>Depois disso</b><span>acesso completo, sem limite de clientes</span></div><span class="val">{brl(VALOR_MENSAL)}/mês</span></div>
+            <div class="dashed"></div>
+            <div style="font-size:11px;color:#6b6552;padding-top:6px;">Cancele quando quiser — seus dados continuam salvos, e você pode reativar depois pagando de novo.</div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown('<div class="perf"></div>', unsafe_allow_html=True)
+
+    _, midb, _ = st.columns([1, 1, 1])
+    with midb:
+        st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+        if st.button("Quero começar agora →", use_container_width=True, key="land_cta_final"):
+            st.session_state["_pagina_publica"] = "auth"
+            st.session_state["_tela"] = "cadastro"
+            st.rerun()
+
 def tela_login():
     apply_css()
+    if st.button("← Sobre o ProManager", key="voltar_apresentacao"):
+        st.session_state["_pagina_publica"] = "landing"
+        st.rerun()
     st.markdown("""
-    <div style='text-align:center;padding:2.4rem 0 1.6rem;'>
+    <div style='text-align:center;padding:1.2rem 0 1.6rem;'>
         <div class='brand-title' style='font-size:2.8rem;font-weight:700;'>ProManager</div>
         <div style='font-size:12px;color:#8b8f99;letter-spacing:2.5px;text-transform:uppercase;margin-top:6px;'>Gestão para profissionais autônomos</div>
     </div>""", unsafe_allow_html=True)
@@ -1669,7 +1734,10 @@ if usuario_publico:
 usuario = st.session_state.usuario_logado
 
 if not usuario:
-    tela_login()
+    if st.session_state.get("_pagina_publica") == "auth":
+        tela_login()
+    else:
+        tela_apresentacao()
 else:
     with db() as con:
         conta = q1(con, "SELECT * FROM contas WHERE usuario=?", (usuario,))
