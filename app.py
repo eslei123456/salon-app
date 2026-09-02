@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS contas(
     tipo TEXT, profissao TEXT, negocio TEXT, cor TEXT, whatsapp TEXT,
     trial_fim TEXT, ativo INTEGER DEFAULT 0, validade TEXT,
     codigo_ativacao TEXT, notif_enviada INTEGER DEFAULT 0, app_url TEXT,
-    cpf TEXT, slogan TEXT, mp_payment_id TEXT, foto_base64 TEXT
+    cpf TEXT, slogan TEXT, mp_payment_id TEXT, foto_base64 TEXT,
+    email TEXT, email_lembrete_enviado TEXT, email_vencido_enviado TEXT
 );
 CREATE TABLE IF NOT EXISTS servicos(
     id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, nome TEXT, valor REAL
@@ -156,6 +157,9 @@ def init_db():
             "ALTER TABLE contas ADD COLUMN slogan TEXT",
             "ALTER TABLE contas ADD COLUMN mp_payment_id TEXT",
             "ALTER TABLE contas ADD COLUMN foto_base64 TEXT",
+            "ALTER TABLE contas ADD COLUMN email TEXT",
+            "ALTER TABLE contas ADD COLUMN email_lembrete_enviado TEXT",
+            "ALTER TABLE contas ADD COLUMN email_vencido_enviado TEXT",
         ]:
             try:
                 con.execute(stmt)
@@ -254,6 +258,94 @@ def mp_status_pagamento(payment_id):
         return r.json()
     except Exception:
         return None
+
+# ══════════════════════════════════════════════════════════════════════════════
+# E-MAIL — avisos automáticos de vencimento. Sem SMTP configurado em Settings →
+# Secrets, essas funções simplesmente não enviam nada (sem quebrar o app).
+# ══════════════════════════════════════════════════════════════════════════════
+def smtp_config():
+    try:
+        host = st.secrets.get("SMTP_HOST", "")
+        porta = st.secrets.get("SMTP_PORT", "587")
+        usuario_smtp = st.secrets.get("SMTP_USER", "")
+        senha_smtp = st.secrets.get("SMTP_PASS", "")
+        remetente = st.secrets.get("SMTP_FROM", usuario_smtp)
+        if host and usuario_smtp and senha_smtp:
+            return {"host": host, "porta": int(porta), "usuario": usuario_smtp,
+                    "senha": senha_smtp, "remetente": remetente}
+    except Exception:
+        pass
+    return None
+
+def enviar_email(destinatario, assunto, corpo_html):
+    cfg = smtp_config()
+    if not cfg or not destinatario:
+        return False
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = assunto
+        msg["From"] = cfg["remetente"]
+        msg["To"] = destinatario
+        msg.attach(MIMEText(corpo_html, "html", "utf-8"))
+        with smtplib.SMTP(cfg["host"], cfg["porta"], timeout=10) as server:
+            server.starttls()
+            server.login(cfg["usuario"], cfg["senha"])
+            server.sendmail(cfg["remetente"], [destinatario], msg.as_string())
+        return True
+    except Exception:
+        return False
+
+def _email_base(titulo, corpo, cta_texto=None):
+    botao = (f'<div style="text-align:center;margin-top:22px;">'
+             f'<span style="background:#1f6f52;color:#fff;padding:12px 26px;border-radius:10px;'
+             f'font-weight:700;font-family:Arial,sans-serif;">{cta_texto}</span></div>') if cta_texto else ""
+    return f"""
+    <div style="font-family:Arial,sans-serif;background:#12151b;padding:32px;border-radius:14px;color:#ece6d7;">
+        <div style="font-size:22px;font-weight:700;color:#2fa574;margin-bottom:4px;">ProManager</div>
+        <div style="font-size:18px;font-weight:700;margin:18px 0 10px;">{titulo}</div>
+        <div style="font-size:14px;line-height:1.7;color:#c7c2b4;">{corpo}</div>
+        {botao}
+    </div>"""
+
+def verificar_e_notificar_vencimentos():
+    """Roda de leve a cada carregamento da página: manda e-mail pra quem está
+    a 1 dia de vencer (trial ou assinatura) e pra quem venceu hoje. Cada aviso
+    só é mandado uma vez por ciclo — o controle fica salvo no próprio banco."""
+    if not smtp_config():
+        return
+    hoje = date.today()
+    amanha = (hoje + timedelta(days=1)).isoformat()
+    hoje_iso_ = hoje.isoformat()
+    with db() as con:
+        contas = q(con, "SELECT * FROM contas WHERE email IS NOT NULL AND email != ''")
+        for c in contas:
+            venc = c["validade"] if c["ativo"] else c["trial_fim"]
+            if not venc:
+                continue
+            primeiro_nome = (c["nome"] or "").split()[0] if c["nome"] else ""
+
+            # aviso "vence amanhã" — uma vez por ciclo (controlado pela própria data de vencimento)
+            if venc == amanha and c.get("email_lembrete_enviado") != venc:
+                corpo = _email_base(
+                    "Seu acesso vence amanhã ⏰",
+                    f"Olá, {primeiro_nome}! {'Sua assinatura' if c['ativo'] else 'Seu período de teste'} "
+                    f"do ProManager vence amanhã. Pra não perder o acesso, renove pela aba "
+                    f"<b>Ajustes → Assinatura</b> dentro do app.")
+                if enviar_email(c["email"], "Seu ProManager vence amanhã", corpo):
+                    con.execute("UPDATE contas SET email_lembrete_enviado=? WHERE usuario=?", (venc, c["usuario"]))
+
+            # aviso "venceu hoje" — uma vez por ciclo também
+            if venc < hoje_iso_ and c.get("email_vencido_enviado") != venc:
+                corpo = _email_base(
+                    "Seu acesso venceu",
+                    f"Olá, {primeiro_nome}! {'Sua assinatura' if c['ativo'] else 'Seu período de teste'} "
+                    f"do ProManager venceu. Seus dados continuam salvos — é só entrar no app e pagar "
+                    f"pra liberar de novo.")
+                if enviar_email(c["email"], "Seu acesso ao ProManager venceu", corpo):
+                    con.execute("UPDATE contas SET email_vencido_enviado=? WHERE usuario=?", (venc, c["usuario"]))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS DE FORMATAÇÃO
@@ -369,7 +461,7 @@ def horarios_livres(usuario, data_iso):
 # Por isso a função recebe SCHEMA_VERSION: toda vez que o esquema do banco
 # mudar (nova tabela/coluna), aumente esse número — isso invalida o cache
 # automaticamente e garante que a migração rode de novo, mesmo sem reboot manual.
-SCHEMA_VERSION = 2  # v2: adicionada a tabela "sessoes" (login persistente)
+SCHEMA_VERSION = 3  # v3: login por e-mail + lembretes de vencimento por e-mail
 
 @st.cache_resource
 def _preparar_banco_uma_vez(versao):
@@ -377,6 +469,16 @@ def _preparar_banco_uma_vez(versao):
     return True
 
 _preparar_banco_uma_vez(SCHEMA_VERSION)
+
+# Checa vencimentos e manda e-mail no máximo 1x por hora por servidor — não a
+# cada clique. Só faz alguma coisa se o SMTP estiver configurado.
+@st.cache_resource(ttl=3600)
+def _checar_vencimentos_periodicamente(carimbo_hora):
+    verificar_e_notificar_vencimentos()
+    return True
+
+_checar_vencimentos_periodicamente(datetime.now().strftime("%Y-%m-%d-%H"))
+
 if "usuario_logado" not in st.session_state:
     # tenta restaurar a sessão a partir do token salvo na URL antes de exigir login de novo
     st.session_state.usuario_logado = usuario_da_sessao(st.query_params.get("sid"))
@@ -684,6 +786,12 @@ hr{margin:18px 0!important;}
 # ══════════════════════════════════════════════════════════════════════════════
 def tela_apresentacao():
     apply_css()
+    st.markdown("""
+    <div style='background:#ff5733;color:#fff;text-align:center;padding:14px;
+        font-family:"Space Grotesk";font-weight:700;font-size:16px;border-radius:10px;
+        margin-bottom:10px;'>
+        🚧 VERSÃO DE TESTE — 2026-09-02-a 🚧
+    </div>""", unsafe_allow_html=True)
     st.markdown(f"""
     <div style='text-align:center;padding:3rem 0 1.6rem;'>
         <div class='brand-title' style='font-size:3.2rem;font-weight:700;'>ProManager</div>
@@ -729,8 +837,8 @@ def tela_apresentacao():
         st.markdown(f"""<div class="receipt">
             <div class="receipt-head"><span class="lbl">Plano único</span><span class="val">sem pegadinha</span></div>
             <div class="dashed"></div>
-            <div class="line-item"><div class="who"><b>{TRIAL_DIAS} dias grátis</b><span>pra testar tudo, sem cartão</span></div><span class="val">R$ 0</span></div>
-            <div class="line-item"><div class="who"><b>Depois disso</b><span>acesso completo, sem limite de clientes</span></div><span class="val">{brl(VALOR_MENSAL)}/mês</span></div>
+            <div class="line-item"><div class="who"><b>{TRIAL_DIAS} dias grátis</b><span>pra testar tudo, sem cartão</span></div><span class="val" style="width:auto;white-space:nowrap;">R$ 0</span></div>
+            <div class="line-item"><div class="who"><b>Depois disso</b><span>acesso completo, sem limite de clientes</span></div><span class="val" style="width:auto;white-space:nowrap;">{brl(VALOR_MENSAL)}/mês</span></div>
             <div class="dashed"></div>
             <div style="font-size:11px;color:#6b6552;padding-top:6px;">Cancele quando quiser — seus dados continuam salvos, e você pode reativar depois pagando de novo.</div>
         </div>""", unsafe_allow_html=True)
@@ -744,10 +852,13 @@ def tela_apresentacao():
             st.session_state["_tela"] = "cadastro"
             st.rerun()
 
-    st.markdown("""
-    <div style='text-align:center;padding:2.4rem 0 .6rem;font-size:11.5px;color:#4a5058;'>
-        Criado por <b style='color:#6b7280;'>Eslei Barreto</b>
+    st.markdown(f"""
+    <div style='text-align:center;padding:2.6rem 0 1.2rem;'>
+        <div style='width:70px;height:3px;background:linear-gradient(90deg,{'#1f6f52'},#2fa574);border-radius:2px;margin:0 auto 18px;'></div>
+        <div style='font-size:13px;color:#8b8f99;letter-spacing:.5px;'>Criado por</div>
+        <div style='font-family:"Space Grotesk";font-size:1.5rem;font-weight:700;color:#ece6d7;margin-top:4px;'>Eslei Barreto</div>
     </div>""", unsafe_allow_html=True)
+    st.caption("build 2026-09-01-b")
 
 def tela_login():
     apply_css()
@@ -769,20 +880,22 @@ def tela_login():
             st.markdown('<div class="ticket">', unsafe_allow_html=True)
             st.markdown("##### Entrar")
             with st.form("f_login"):
-                usuario = st.text_input("Usuário")
+                identificador = st.text_input("Usuário, e-mail ou CPF")
                 senha = st.text_input("Senha", type="password")
                 if st.form_submit_button("Entrar", use_container_width=True):
+                    id_limpo = identificador.strip()
                     with db() as con:
-                        conta = q1(con, "SELECT * FROM contas WHERE usuario=?", (usuario,))
+                        conta = q1(con, "SELECT * FROM contas WHERE usuario=? OR email=? OR cpf=?",
+                                   (id_limpo, id_limpo, so_digitos(id_limpo)))
                     if not conta:
-                        st.error("Usuário não encontrado.")
+                        st.error("Não encontrei nenhuma conta com esse usuário, e-mail ou CPF.")
                     else:
                         h, _ = hash_senha(senha, conta["senha_salt"])
                         if h != conta["senha_hash"]:
                             st.error("Senha incorreta.")
                         else:
-                            st.session_state.usuario_logado = usuario
-                            criar_sessao(usuario)
+                            st.session_state.usuario_logado = conta["usuario"]
+                            criar_sessao(conta["usuario"])
                             st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
@@ -798,6 +911,7 @@ def tela_login():
                 tipo = "beleza" if "Beleza" in tipo_disp else "professor"
                 c_nome = st.text_input("Nome completo")
                 c_cpf = st.text_input("CPF", placeholder="000.000.000-00")
+                c_email = st.text_input("E-mail", placeholder="voce@exemplo.com")
                 c_usuario = st.text_input("Usuário (sem espaços)")
                 c_whats = st.text_input("WhatsApp")
                 c_prof = st.text_input("Especialidade / área", placeholder="Ex: Manicure, Matemática...")
@@ -807,8 +921,11 @@ def tela_login():
                 c_conf = st.text_input("Confirmar senha", type="password")
                 if st.form_submit_button("Criar conta", use_container_width=True):
                     erros = []
+                    email_limpo = c_email.strip().lower()
                     if not c_nome.strip(): erros.append("Informe seu nome.")
                     if not cpf_valido(c_cpf): erros.append("CPF inválido.")
+                    if "@" not in email_limpo or "." not in email_limpo.split("@")[-1]:
+                        erros.append("E-mail inválido.")
                     if not c_usuario.strip() or " " in c_usuario: erros.append("Usuário inválido.")
                     if not c_whats.strip(): erros.append("Informe seu WhatsApp.")
                     if len(c_senha) < 4: erros.append("Senha com mínimo 4 caracteres.")
@@ -818,17 +935,19 @@ def tela_login():
                             erros.append("Usuário já existe.")
                         if cpf_valido(c_cpf) and q1(con, "SELECT 1 FROM contas WHERE cpf=?", (so_digitos(c_cpf),)):
                             erros.append("Já existe uma conta cadastrada com esse CPF.")
+                        if "@" in email_limpo and q1(con, "SELECT 1 FROM contas WHERE email=?", (email_limpo,)):
+                            erros.append("Já existe uma conta cadastrada com esse e-mail.")
                     if erros:
                         for e in erros: st.error(e)
                     else:
                         h, salt = hash_senha(c_senha)
                         with db() as con:
                             con.execute("""INSERT INTO contas(usuario,nome,senha_hash,senha_salt,tipo,profissao,
-                                negocio,cor,whatsapp,trial_fim,codigo_ativacao,cpf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                negocio,cor,whatsapp,trial_fim,codigo_ativacao,cpf,email) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                                 (c_usuario.strip(), c_nome.strip(), h, salt, tipo, c_prof.strip() or tipo,
                                  c_neg.strip() or c_nome.strip(), c_cor, c_whats.strip(),
                                  (date.today()+timedelta(days=TRIAL_DIAS)).isoformat(), gerar_codigo(),
-                                 so_digitos(c_cpf)))
+                                 so_digitos(c_cpf), email_limpo))
                         st.session_state["_tela"] = "login"
                         st.success(f"Conta criada! Faça login com {c_usuario.strip()}. Trial de {TRIAL_DIAS} dias iniciado.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -989,7 +1108,7 @@ def render_sidebar(conta, L):
             st.session_state.usuario_logado = None
             st.session_state.nav = "inicio"
             st.rerun()
-        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-08-29-d</div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-09-01-a</div>", unsafe_allow_html=True)
 
 def aba_ajustes(conta):
     usuario = conta["usuario"]
@@ -1025,12 +1144,24 @@ def aba_ajustes(conta):
         slg = st.text_input("Slogan (aparece no menu e no link de agendamento)",
                              value=conta.get("slogan") or "", key="cfg_slogan",
                              placeholder="Ex: Seu sorriso, minha prioridade")
+        eml = st.text_input("E-mail (login e avisos de vencimento)",
+                             value=conta.get("email") or "", key="cfg_email",
+                             placeholder="voce@exemplo.com")
         nco = st.color_picker("Cor de destaque", value=conta["cor"], key="cfg_cor")
         if st.button("Salvar alterações"):
-            with db() as con:
-                con.execute("UPDATE contas SET negocio=?, cor=?, slogan=? WHERE usuario=?",
-                            (nn, nco, slg.strip(), usuario))
-            st.success("Salvo!"); st.rerun()
+            email_novo = eml.strip().lower()
+            if email_novo and ("@" not in email_novo or "." not in email_novo.split("@")[-1]):
+                st.error("E-mail inválido.")
+            else:
+                with db() as con:
+                    if email_novo:
+                        conflito = q1(con, "SELECT 1 FROM contas WHERE email=? AND usuario!=?", (email_novo, usuario))
+                        if conflito:
+                            st.error("Esse e-mail já está em uso por outra conta.")
+                            st.stop()
+                    con.execute("UPDATE contas SET negocio=?, cor=?, slogan=?, email=? WHERE usuario=?",
+                                (nn, nco, slg.strip(), email_novo, usuario))
+                st.success("Salvo!"); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
         st.markdown('<div class="fin-card">', unsafe_allow_html=True)
