@@ -68,7 +68,70 @@ LABELS = {
     },
 }
 
+# Catálogo padrão de serviços/preços POR ESPECIALIDADE — uma manicure não
+# deveria ver "barba" na lista dela, nem um barbeiro ver "esmaltação". Cada
+# especialidade semeia só o que faz sentido pra ela.
+ESPECIALIDADES = {
+    "beleza": {
+        "Manicure/Pedicure": {
+            "Manicure": 25, "Pedicure": 30, "Manicure + Pedicure": 50,
+            "Esmaltação em gel": 45, "Alongamento de unha": 80, "Spa dos pés": 60,
+        },
+        "Cabeleireiro(a)": {
+            "Corte feminino": 60, "Escova": 45, "Progressiva": 200,
+            "Coloração simples": 120, "Coloração c/ mechas": 200,
+            "Hidratação": 80, "Penteado": 90, "Corte infantil": 40,
+        },
+        "Barbeiro": {
+            "Corte masculino": 35, "Barba": 25, "Corte + Barba": 55,
+            "Sobrancelha navalhada": 15, "Pézinho": 15,
+        },
+        "Esteticista": {
+            "Limpeza de pele": 90, "Design de sobrancelha": 25,
+            "Massagem relaxante": 100, "Drenagem linfática": 90, "Peeling": 120,
+        },
+        "Maquiador(a)": {
+            "Maquiagem social": 100, "Maquiagem para noiva": 250,
+            "Maquiagem artística": 150, "Automaquiagem (curso rápido)": 80,
+        },
+        "Depilador(a)": {
+            "Depilação perna completa": 60, "Depilação axila": 25,
+            "Depilação buço": 15, "Depilação completa": 120,
+        },
+        "Outro": {},
+    },
+    "professor": {
+        "Reforço escolar geral": {
+            "Matemática": 50, "Português": 50, "Redação": 50, "Ciências": 50,
+        },
+        "Matemática": {"Aula de Matemática": 50, "Preparatório vestibular/ENEM": 70},
+        "Idiomas": {"Inglês": 60, "Espanhol": 55, "Conversação": 65},
+        "Música": {"Violão": 60, "Piano": 70, "Canto": 60, "Teoria musical": 50},
+        "Informática/Tecnologia": {"Informática básica": 50, "Programação": 80},
+        "Outro": {},
+    },
+}
+
 LIMIAR_CLIENTE_FIEL = 5   # visitas sem faltas a partir daqui já conta como cliente fiel
+
+SLOGANS_SUGERIDOS = {
+    "Manicure/Pedicure": ["Unhas impecáveis, sempre.", "Seu cuidado, minha arte.", "Mãos e pés sempre em dia."],
+    "Cabeleireiro(a)": ["Seu cabelo, sua confiança.", "Beleza que começa no cabelo."],
+    "Barbeiro": ["Estilo e precisão em cada corte.", "Seu visual, nossa navalha."],
+    "Esteticista": ["Cuidando da sua pele com carinho.", "Sua beleza natural em primeiro lugar."],
+    "Maquiador(a)": ["Realçando sua beleza única.", "Maquiagem que conta sua história."],
+    "Depilador(a)": ["Pele lisinha o ano inteiro.", "Cuidado e delicadeza em cada sessão."],
+    "Reforço escolar geral": ["Aprender de um jeito que faz sentido.", "Notas melhores começam aqui."],
+    "Matemática": ["Números não precisam assustar.", "Matemática sem mistério."],
+    "Idiomas": ["Fluência começa com a primeira aula.", "Seu próximo idioma está aqui."],
+    "Música": ["Toda música começa com uma nota.", "Aprenda no seu ritmo."],
+    "Informática/Tecnologia": ["Tecnologia ao seu alcance.", "Programando o seu futuro."],
+}
+
+def _aplicar_sugestao_slogan():
+    escolha = st.session_state.get("cfg_slogan_sugestao")
+    if escolha and escolha != "Personalizado":
+        st.session_state["cfg_slogan"] = escolha
 
 CATEGORIAS_GASTO = ["Produtos / Insumos","Material didático","Aluguel","Energia elétrica",
     "Internet / Telefone","Plataformas online","Equipamento","Marketing","Pessoal","Outros"]
@@ -179,13 +242,16 @@ def q1(con, sql, params=()):
     linhas = _linhas_para_dicts(cur, cur.fetchall())
     return linhas[0] if linhas else None
 
-def servicos_da_conta(usuario, tipo):
+def servicos_da_conta(usuario, tipo, especialidade=None):
     """Catálogo de serviços/valores do próprio profissional. Se ele nunca mexeu,
-    semeia com o catálogo padrão do tipo de negócio na primeira vez."""
+    semeia com o catálogo da ESPECIALIDADE dele (não um catálogo genérico misturado)."""
     with db() as con:
         linhas = q(con, "SELECT * FROM servicos WHERE usuario=? ORDER BY nome", (usuario,))
         if not linhas:
-            for nome, valor in LABELS[tipo]["opcoes"].items():
+            catalogo_base = ESPECIALIDADES.get(tipo, {}).get(especialidade)
+            if catalogo_base is None:
+                catalogo_base = LABELS.get(tipo, {}).get("opcoes", {})
+            for nome, valor in catalogo_base.items():
                 con.execute("INSERT INTO servicos(usuario,nome,valor) VALUES (?,?,?)", (usuario, nome, valor))
             linhas = q(con, "SELECT * FROM servicos WHERE usuario=? ORDER BY nome", (usuario,))
     return {r["nome"]: r["valor"] for r in linhas}
@@ -298,16 +364,12 @@ def enviar_email(destinatario, assunto, corpo_html):
     except Exception:
         return False
 
-def _email_base(titulo, corpo, cta_texto=None):
-    botao = (f'<div style="text-align:center;margin-top:22px;">'
-             f'<span style="background:#1f6f52;color:#fff;padding:12px 26px;border-radius:10px;'
-             f'font-weight:700;font-family:Arial,sans-serif;">{cta_texto}</span></div>') if cta_texto else ""
+def _email_base(titulo, corpo):
     return f"""
     <div style="font-family:Arial,sans-serif;background:#12151b;padding:32px;border-radius:14px;color:#ece6d7;">
         <div style="font-size:22px;font-weight:700;color:#2fa574;margin-bottom:4px;">ProManager</div>
         <div style="font-size:18px;font-weight:700;margin:18px 0 10px;">{titulo}</div>
         <div style="font-size:14px;line-height:1.7;color:#c7c2b4;">{corpo}</div>
-        {botao}
     </div>"""
 
 def verificar_e_notificar_vencimentos():
@@ -327,7 +389,6 @@ def verificar_e_notificar_vencimentos():
                 continue
             primeiro_nome = (c["nome"] or "").split()[0] if c["nome"] else ""
 
-            # aviso "vence amanhã" — uma vez por ciclo (controlado pela própria data de vencimento)
             if venc == amanha and c.get("email_lembrete_enviado") != venc:
                 corpo = _email_base(
                     "Seu acesso vence amanhã ⏰",
@@ -337,7 +398,6 @@ def verificar_e_notificar_vencimentos():
                 if enviar_email(c["email"], "Seu ProManager vence amanhã", corpo):
                     con.execute("UPDATE contas SET email_lembrete_enviado=? WHERE usuario=?", (venc, c["usuario"]))
 
-            # aviso "venceu hoje" — uma vez por ciclo também
             if venc < hoje_iso_ and c.get("email_vencido_enviado") != venc:
                 corpo = _email_base(
                     "Seu acesso venceu",
@@ -461,7 +521,7 @@ def horarios_livres(usuario, data_iso):
 # Por isso a função recebe SCHEMA_VERSION: toda vez que o esquema do banco
 # mudar (nova tabela/coluna), aumente esse número — isso invalida o cache
 # automaticamente e garante que a migração rode de novo, mesmo sem reboot manual.
-SCHEMA_VERSION = 3  # v3: login por e-mail + lembretes de vencimento por e-mail
+SCHEMA_VERSION = 3  # v3: login por e-mail/CPF + avisos de vencimento + especialidades
 
 @st.cache_resource
 def _preparar_banco_uma_vez(versao):
@@ -478,7 +538,6 @@ def _checar_vencimentos_periodicamente(carimbo_hora):
     return True
 
 _checar_vencimentos_periodicamente(datetime.now().strftime("%Y-%m-%d-%H"))
-
 if "usuario_logado" not in st.session_state:
     # tenta restaurar a sessão a partir do token salvo na URL antes de exigir login de novo
     st.session_state.usuario_logado = usuario_da_sessao(st.query_params.get("sid"))
@@ -786,17 +845,11 @@ hr{margin:18px 0!important;}
 # ══════════════════════════════════════════════════════════════════════════════
 def tela_apresentacao():
     apply_css()
-    st.markdown("""
-    <div style='background:#ff5733;color:#fff;text-align:center;padding:14px;
-        font-family:"Space Grotesk";font-weight:700;font-size:16px;border-radius:10px;
-        margin-bottom:10px;'>
-        🚧 VERSÃO DE TESTE — 2026-09-02-a 🚧
-    </div>""", unsafe_allow_html=True)
     st.markdown(f"""
-    <div style='text-align:center;padding:3rem 0 1.6rem;'>
+    <div style='text-align:center;padding:2.2rem 0 1.2rem;'>
         <div class='brand-title' style='font-size:3.2rem;font-weight:700;'>ProManager</div>
         <div style='font-size:13px;color:#8b8f99;letter-spacing:2.5px;text-transform:uppercase;margin-top:8px;'>Gestão para profissionais autônomos</div>
-        <div style='max-width:560px;margin:20px auto 0;font-size:15px;color:#c7c2b4;line-height:1.7;'>
+        <div style='max-width:560px;margin:16px auto 0;font-size:15px;color:#c7c2b4;line-height:1.7;'>
             Agenda, financeiro e clientes num só lugar — e um link pra seus próprios clientes
             marcarem o horário sozinhos, sem você precisar ficar respondendo mensagem o dia inteiro.
         </div>
@@ -814,7 +867,7 @@ def tela_apresentacao():
             st.session_state["_tela"] = "login"
             st.rerun()
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1.4rem;'></div>", unsafe_allow_html=True)
 
     feats = [
         ("📅", "Agenda sem esforço", "Cadastre seus horários e serviços uma vez. O sistema mostra sozinho quais estão livres."),
@@ -830,7 +883,7 @@ def tela_apresentacao():
             <div style="font-size:12px;color:#8b8f99;line-height:1.6;">{desc}</div>
         </div>""", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1.2rem;'></div>", unsafe_allow_html=True)
 
     _, midp, _ = st.columns([1, 1, 1])
     with midp:
@@ -843,22 +896,18 @@ def tela_apresentacao():
             <div style="font-size:11px;color:#6b6552;padding-top:6px;">Cancele quando quiser — seus dados continuam salvos, e você pode reativar depois pagando de novo.</div>
         </div>""", unsafe_allow_html=True)
         st.markdown('<div class="perf"></div>', unsafe_allow_html=True)
-
-    _, midb, _ = st.columns([1, 1, 1])
-    with midb:
-        st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:.8rem;'></div>", unsafe_allow_html=True)
         if st.button("Quero começar agora →", use_container_width=True, key="land_cta_final"):
             st.session_state["_pagina_publica"] = "auth"
             st.session_state["_tela"] = "cadastro"
             st.rerun()
 
     st.markdown(f"""
-    <div style='text-align:center;padding:2.6rem 0 1.2rem;'>
-        <div style='width:70px;height:3px;background:linear-gradient(90deg,{'#1f6f52'},#2fa574);border-radius:2px;margin:0 auto 18px;'></div>
-        <div style='font-size:13px;color:#8b8f99;letter-spacing:.5px;'>Criado por</div>
+    <div style='text-align:center;padding:1.8rem 0 1.4rem;'>
+        <div style='width:70px;height:3px;background:linear-gradient(90deg,#1f6f52,#2fa574);border-radius:2px;margin:0 auto 18px;'></div>
+        <div style='font-size:13px;color:#8b8f99;letter-spacing:.5px;'>Desenvolvido por</div>
         <div style='font-family:"Space Grotesk";font-size:1.5rem;font-weight:700;color:#ece6d7;margin-top:4px;'>Eslei Barreto</div>
     </div>""", unsafe_allow_html=True)
-    st.caption("build 2026-09-01-b")
 
 def tela_login():
     apply_css()
@@ -904,17 +953,20 @@ def tela_login():
                 st.rerun()
 
         else:
-            st.markdown('<div class="ticket">', unsafe_allow_html=True)
             st.markdown("##### Criar conta grátis")
+            tipo_disp = st.selectbox("Tipo de conta", ["💅 Beleza / Estética", "📚 Professor / Tutor"], key="cad_tipo_disp")
+            tipo = "beleza" if "Beleza" in tipo_disp else "professor"
+            especialidades_disp = list(ESPECIALIDADES.get(tipo, {}).keys())
+
+            st.markdown('<div class="ticket">', unsafe_allow_html=True)
             with st.form("f_cadastro"):
-                tipo_disp = st.selectbox("Tipo de conta", ["💅 Beleza / Estética", "📚 Professor / Tutor"])
-                tipo = "beleza" if "Beleza" in tipo_disp else "professor"
                 c_nome = st.text_input("Nome completo")
                 c_cpf = st.text_input("CPF", placeholder="000.000.000-00")
                 c_email = st.text_input("E-mail", placeholder="voce@exemplo.com")
                 c_usuario = st.text_input("Usuário (sem espaços)")
                 c_whats = st.text_input("WhatsApp")
-                c_prof = st.text_input("Especialidade / área", placeholder="Ex: Manicure, Matemática...")
+                c_especialidade = st.selectbox("Especialidade", especialidades_disp,
+                    help="Isso define quais serviços já vêm pré-cadastrados pra você — dá pra ajustar depois em Ajustes.")
                 c_neg = st.text_input("Nome do negócio")
                 c_cor = st.color_picker("Cor de destaque", value="#1f6f52")
                 c_senha = st.text_input("Criar senha", type="password")
@@ -944,7 +996,7 @@ def tela_login():
                         with db() as con:
                             con.execute("""INSERT INTO contas(usuario,nome,senha_hash,senha_salt,tipo,profissao,
                                 negocio,cor,whatsapp,trial_fim,codigo_ativacao,cpf,email) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                                (c_usuario.strip(), c_nome.strip(), h, salt, tipo, c_prof.strip() or tipo,
+                                (c_usuario.strip(), c_nome.strip(), h, salt, tipo, c_especialidade,
                                  c_neg.strip() or c_nome.strip(), c_cor, c_whats.strip(),
                                  (date.today()+timedelta(days=TRIAL_DIAS)).isoformat(), gerar_codigo(),
                                  so_digitos(c_cpf), email_limpo))
@@ -1108,7 +1160,7 @@ def render_sidebar(conta, L):
             st.session_state.usuario_logado = None
             st.session_state.nav = "inicio"
             st.rerun()
-        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-09-01-a</div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align:center;font-size:9.5px;color:#3a4048;margin-top:10px;'>build 2026-08-29-d</div>", unsafe_allow_html=True)
 
 def aba_ajustes(conta):
     usuario = conta["usuario"]
@@ -1141,6 +1193,12 @@ def aba_ajustes(conta):
                             (base64.b64encode(foto.read()).decode(), usuario))
             st.success("Foto atualizada!"); st.rerun()
         nn = st.text_input("Nome do negócio", value=conta["negocio"], key="cfg_nn")
+
+        sugestoes = SLOGANS_SUGERIDOS.get(conta.get("profissao"), [])
+        if sugestoes:
+            st.selectbox("Sugestões de slogan pra sua especialidade (opcional)",
+                         ["Personalizado"] + sugestoes, key="cfg_slogan_sugestao",
+                         on_change=_aplicar_sugestao_slogan)
         slg = st.text_input("Slogan (aparece no menu e no link de agendamento)",
                              value=conta.get("slogan") or "", key="cfg_slogan",
                              placeholder="Ex: Seu sorriso, minha prioridade")
@@ -1189,7 +1247,7 @@ def aba_ajustes(conta):
     with db() as con:
         servicos = q(con, "SELECT * FROM servicos WHERE usuario=? ORDER BY nome", (usuario,))
     if not servicos:
-        servicos_da_conta(usuario, conta["tipo"])  # semeia o catálogo padrão na primeira vez
+        servicos_da_conta(usuario, conta["tipo"], conta.get("profissao"))  # semeia o catálogo da especialidade
         st.rerun()
 
     for s in servicos:
@@ -1226,7 +1284,7 @@ def tela_publica_agendamento(usuario_prof):
         return
 
     L = LABELS[conta["tipo"]]
-    catalogo = servicos_da_conta(usuario_prof, conta["tipo"])
+    catalogo = servicos_da_conta(usuario_prof, conta["tipo"], conta.get("profissao"))
     slogan_html = f"<div style='font-size:11.5px;color:#5c7fa8;font-style:italic;margin-top:3px;'>“{conta['slogan']}”</div>" if conta.get("slogan") else ""
     foto_html = (f"<img src='data:image/jpeg;base64,{conta['foto_base64']}' style='width:64px;height:64px;border-radius:16px;object-fit:cover;margin:0 auto 8px;display:block;border:2px solid {conta['cor']};'>"
                  if conta.get("foto_base64") else "")
@@ -1286,12 +1344,12 @@ def tela_publica_agendamento(usuario_prof):
         if st.session_state.get("_agendado_ok"):
             info = st.session_state.pop("_agendado_ok")
             st.markdown(f"""<div class="receipt" style="margin-top:16px;">
-                <div class="receipt-head"><span class="lbl">Agendamento solicitado</span><span class="val">✓</span></div>
+                <div class="receipt-head"><span class="lbl">Agendamento registrado</span><span class="val">✓</span></div>
                 <div class="dashed"></div>
                 <div style="font-size:13px;padding:8px 0;">{info}</div>
                 <div class="dashed"></div>
                 <div style="font-size:11.5px;color:#6b6552;padding-top:6px;">
-                    {conta['nome'].split()[0]} vai confirmar com você em breve.
+                    Seu horário já está guardado na agenda de {conta['nome'].split()[0]}.
                 </div>
             </div>""", unsafe_allow_html=True)
             wa = wa_link(conta["whatsapp"], f"Olá {conta['nome'].split()[0]}! Acabei de agendar {item} pelo link.")
@@ -1420,6 +1478,23 @@ def painel_inicio(conta, L):
     c3.markdown(f'<div class="ticket"><div class="l">Receita total</div><div class="v">{brl(rec_total)}</div><div class="s">histórico</div></div>', unsafe_allow_html=True)
     c4.markdown(f'<div class="ticket"><div class="l">{"Assinatura" if assinatura_valida(conta) else "Trial"}</div><div class="v">{dias_assin} dias</div><div class="s">restantes</div></div>', unsafe_allow_html=True)
 
+    # mini-gráfico dos últimos 7 dias — dá uma noção rápida do ritmo da semana sem precisar ir em Relatórios
+    dias_7 = [(date.today() - timedelta(days=i)) for i in range(6, -1, -1)]
+    receita_por_dia = {d.isoformat(): 0.0 for d in dias_7}
+    for a in conf_sem:
+        if a["data"] in receita_por_dia:
+            receita_por_dia[a["data"]] += a["valor"]
+    if any(receita_por_dia.values()):
+        fig_semana = go.Figure(go.Bar(
+            x=[d.strftime("%a") for d in dias_7], y=list(receita_por_dia.values()),
+            marker_color="#2fa574", hovertemplate="%{x}: R$ %{y:,.2f}<extra></extra>"))
+        fig_semana.update_layout(
+            height=140, margin=dict(t=8, b=8, l=8, r=8),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#8b8f99", size=11),
+            xaxis=dict(showgrid=False), yaxis=dict(visible=False))
+        st.plotly_chart(fig_semana, use_container_width=True, config={"displayModeBar": False})
+
     ticket_medio = (rec_mes / len(conf_mes)) if conf_mes else 0
     fin_html = f"""<div class="fin-card"><h3>Financeiro do mês</h3>
         <div class="fin-row"><span class="l">Receita do mês</span><span class="v" style="color:#2fa574;">{brl(rec_mes)}</span></div>
@@ -1452,16 +1527,31 @@ def painel_inicio(conta, L):
     else:
         st.caption("Nenhuma meta ativa — cadastre uma na aba Metas para acompanhar aqui.")
 
-    st.markdown("<br>##### Próximos atendimentos", unsafe_allow_html=True)
+    st.markdown("<br>\n\n##### Próximos atendimentos", unsafe_allow_html=True)
     if not proximos:
         empty_state("📅", "Nada agendado além de hoje.")
     for a in proximos:
-        st.markdown(f"""<div class="agenda-card">
-            <span class="time">{a['data'][8:10]}/{a['data'][5:7]} {a['hora']}</span>
-            <div class="init">{ini(a['contato'])}</div>
-            <div class="info"><b>{a['contato']}</b><span>{a['item']}</span></div>
-            <span class="val">{brl(a['valor'])}</span>
-        </div>""", unsafe_allow_html=True)
+        cc1, cc2 = st.columns([4, 1.6])
+        with cc1:
+            st.markdown(f"""<div class="agenda-card">
+                <span class="time">{a['data'][8:10]}/{a['data'][5:7]} {a['hora']}</span>
+                <div class="init">{ini(a['contato'])}</div>
+                <div class="info"><b>{a['contato']}</b><span>{a['item']}</span></div>
+                <span class="val">{brl(a['valor'])}</span>
+            </div>""", unsafe_allow_html=True)
+        with cc2:
+            b1, b2 = st.columns(2)
+            if b1.button("✓", key=f"ini_ok_{a['id']}", help="Marcar como confirmado", use_container_width=True):
+                with db() as con:
+                    con.execute("UPDATE atendimentos SET status='confirmado' WHERE id=?", (a["id"],))
+                    con.execute("UPDATE contatos SET visitas=visitas+1, gasto_total=gasto_total+? WHERE usuario=? AND nome=?",
+                                (a["valor"], usuario, a["contato"]))
+                st.rerun()
+            if b2.button("✗", key=f"ini_no_{a['id']}", help=f"Marcar {L['falta_verbo'].lower()}", use_container_width=True):
+                with db() as con:
+                    con.execute("UPDATE atendimentos SET status='falta' WHERE id=?", (a["id"],))
+                    con.execute("UPDATE contatos SET faltas=faltas+1 WHERE usuario=? AND nome=?", (usuario, a["contato"]))
+                st.rerun()
 
     if assinatura_valida(conta):
         st.markdown(f"""<div class="pix-banner">
@@ -1474,7 +1564,7 @@ def painel_inicio(conta, L):
 # ══════════════════════════════════════════════════════════════════════════════
 def aba_agenda(conta, L):
     usuario = conta["usuario"]
-    catalogo = servicos_da_conta(usuario, conta["tipo"])
+    catalogo = servicos_da_conta(usuario, conta["tipo"], conta.get("profissao"))
     with db() as con:
         contatos = [r["nome"] for r in q(con, "SELECT nome FROM contatos WHERE usuario=? ORDER BY nome", (usuario,))]
         hoje_at = q(con, "SELECT * FROM atendimentos WHERE usuario=? AND data=? ORDER BY hora", (usuario, hoje_iso))
@@ -1589,7 +1679,8 @@ def aba_contatos(conta, L):
             else:
                 chip_cls, chip_txt = "chip-g", "✅ ok"
             cor = cor_avatar(c["nome"])
-            tel_html = (f'<a href="{wa_link(so_digitos(c["telefone"]), f"Olá {c["nome"].split()[0]}!")}" target="_blank" style="color:#7fd6b3;text-decoration:none;">📲 {c["telefone"]}</a>'
+            msg_wa = f"Olá, {c['nome'].split()[0]}! Aqui é da {conta['negocio']}, tudo bem?"
+            tel_html = (f'<a href="{wa_link(so_digitos(c["telefone"]), msg_wa)}" target="_blank" style="color:#7fd6b3;text-decoration:none;">📲 {c["telefone"]}</a>'
                         if c["telefone"] else "sem telefone")
             cards += f"""<div class="contact-card">
                 <div class="cc-top">
@@ -1613,7 +1704,7 @@ def aba_contatos(conta, L):
         with st.form("f_contato", clear_on_submit=True):
             n = st.text_input("Nome")
             t = st.text_input("Telefone")
-            fav = st.selectbox(f"{L['item']} favorito", list(servicos_da_conta(usuario, conta['tipo']).keys()))
+            fav = st.selectbox(f"{L['item']} favorito", list(servicos_da_conta(usuario, conta['tipo'], conta.get('profissao')).keys()))
             if st.form_submit_button("Cadastrar"):
                 if n.strip():
                     with db() as con:
@@ -1748,14 +1839,14 @@ def aba_relatorios(conta, L):
         try: return datetime.strptime(m, "%Y-%m").strftime("%B/%Y")
         except Exception: return m
 
-    st.markdown("<br>##### Destaques", unsafe_allow_html=True)
+    st.markdown("<br>\n\n##### Destaques", unsafe_allow_html=True)
     d1, d2, d3, d4 = st.columns(4)
     d1.markdown(f'<div class="fin-card"><h3>📅 Mês mais movimentado</h3><div style="font-size:15px;font-weight:700;">{nome_mes(mes_recorde) if mes_recorde else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{meses[mes_recorde]["qtd"] if mes_recorde else 0} atendimentos</div></div>', unsafe_allow_html=True)
     d2.markdown(f'<div class="fin-card"><h3>💵 Mês de maior faturamento</h3><div style="font-size:15px;font-weight:700;">{nome_mes(mes_recorde_fat) if mes_recorde_fat else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{brl(meses[mes_recorde_fat]["receita"]) if mes_recorde_fat else brl(0)}</div></div>', unsafe_allow_html=True)
     d3.markdown(f'<div class="fin-card"><h3>🏆 {L["item"]} com mais retorno</h3><div style="font-size:15px;font-weight:700;">{item_campeao[0] if item_campeao else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{brl(item_campeao[1]) if item_campeao else brl(0)} gerados</div></div>', unsafe_allow_html=True)
     d4.markdown(f'<div class="fin-card"><h3>🧾 Categoria que mais pesou</h3><div style="font-size:15px;font-weight:700;">{cat_campea[0] if cat_campea else "—"}</div><div style="font-size:11.5px;color:#8b8f99;">{brl(cat_campea[1]) if cat_campea else brl(0)} gastos</div></div>', unsafe_allow_html=True)
 
-    st.markdown("<br>##### Receita × Gasto × Lucro por mês", unsafe_allow_html=True)
+    st.markdown("<br>\n\n##### Receita × Gasto × Lucro por mês", unsafe_allow_html=True)
     ordenados = sorted(meses.items())
     fig = go.Figure()
     fig.add_trace(go.Bar(name="Receita", x=[nome_mes(m) for m, _ in ordenados], y=[v["receita"] for _, v in ordenados], marker_color="#2fa574"))
